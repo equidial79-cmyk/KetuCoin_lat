@@ -2,17 +2,18 @@ name: Build Android APK
 
 on:
   push:
-    branches: [ "main", "master" ]
+    branches: [ "**" ]
   pull_request:
-    branches: [ "main", "master" ]
+    branches: [ "**" ]
   workflow_dispatch:
 
 jobs:
   build:
+    name: Build Debug APK
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout Code
+      - name: Checkout Repository
         uses: actions/checkout@v4
 
       - name: Set up JDK 17
@@ -25,6 +26,13 @@ jobs:
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v4
 
+      - name: Generate Dummy debug.keystore if Missing
+        run: |
+          if [ ! -f debug.keystore ]; then
+            echo "Generating debug.keystore for GitHub runner..."
+            keytool -genkey -v -keystore debug.keystore -storepass android -alias androiddebugkey -keypass android -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=Android Debug,O=Android,C=US"
+          fi
+
       - name: Prepare Environment File
         run: |
           touch .env
@@ -33,14 +41,16 @@ jobs:
           fi
 
       - name: Make Gradlew Executable
-        run: chmod +x gradlew || true
+        run: chmod +x gradlew
 
-      - name: Build Debug APK
-        run: ./gradlew assembleDebug --stacktrace
+      - name: Build Debug APK with Stacktrace
+        run: ./gradlew :app:assembleDebug --stacktrace --no-daemon
 
-      - name: Upload Debug APK
+      - name: Upload Debug APK Artifact
         uses: actions/upload-artifact@v4
+        if: always()
         with:
-          name: app-debug-apk
+          name: KetuCoin-debug-apk
           path: app/build/outputs/apk/debug/*.apk
+          if-no-files-found: warn
           retention-days: 14
