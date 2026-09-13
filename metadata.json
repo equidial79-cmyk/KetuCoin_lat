@@ -1,0 +1,6 @@
+{
+  "name": "KetuCoin",
+  "description": "Cryptocurrency to INR exchange client with live market prices, real-time wallets, instant crypto selling, KYC verification, and support chat powered by Supabase.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

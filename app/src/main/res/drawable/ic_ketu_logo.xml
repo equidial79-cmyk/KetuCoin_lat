@@ -1,0 +1,194 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:aapt="http://schemas.android.com/aapt"
+    android:width="96dp"
+    android:height="96dp"
+    android:viewportWidth="100"
+    android:viewportHeight="100">
+
+    <!-- Dark background circle / tile backing -->
+    <path
+        android:pathData="M14,6 C8,6 6,8 6,14 L6,86 C6,92 8,94 14,94 L86,94 C92,94 94,92 94,86 L94,14 C94,8 92,6 86,6 Z">
+        <aapt:attr name="android:fillColor">
+            <gradient
+                android:startX="0"
+                android:startY="0"
+                android:endX="100"
+                android:endY="100"
+                android:type="linear">
+                <item android:color="#070D1E" android:offset="0.0" />
+                <item android:color="#0B132B" android:offset="1.0" />
+            </gradient>
+        </aapt:attr>
+    </path>
+
+    <!-- K LOGO - 1. Upper Stem Left Emerald Facet -->
+    <path
+        android:pathData="M22,24 L31,24 L31,48 L22,54 Z">
+        <aapt:attr name="android:fillColor">
+            <gradient
+                android:startX="22"
+                android:startY="24"
+                android:endX="31"
+                android:endY="54"
+                android:type="linear">
+                <item android:color="#34D399" android:offset="0.0" />
+                <item android:color="#10B981" android:offset="0.5" />
+                <item android:color="#059669" android:offset="1.0" />
+            </gradient>
+        </aapt:attr>
+    </path>
+
+    <!-- K LOGO - 2. Upper Stem Top Bevel & Right Gold Facet -->
+    <path
+        android:pathData="M22,24 L37,24 L37,34 L31,48 L31,24 Z">
+        <aapt:attr name="android:fillColor">
+            <gradient
+                android:startX="22"
+                android:startY="24"
+                android:endX="37"
+                android:endY="48"
+                android:type="linear">
+                <item android:color="#FFFBEB" android:offset="0.0" />
+                <item android:color="#FDE047" android:offset="0.3" />
+                <item android:color="#F59E0B" android:offset="0.8" />
+                <item android:color="#D97706" android:offset="1.0" />
+            </gradient>
+        </aapt:attr>
+    </path>
+
+    <!-- K LOGO - 3. Upper Stem Gold Diagonal Slice Edge -->
+    <path
+        android:pathData="M22,54 L31,48 L37,42 L37,45 L22,56 Z">
+        <aapt:attr name="android:fillColor">
+            <gradient
+                android:startX="22"
+                android:startY="42"
+                android:endX="37"
+                android:endY="56"
+                android:type="linear">
+                <item android:color="#FDE047" android:offset="0.0" />
+                <item android:color="#F59E0B" android:offset="1.0" />
+            </gradient>
+        </aapt:attr>
+    </path>
+
+    <!-- K LOGO - 4. Lower Stem Emerald Body -->
+    <path
+        android:pathData="M22,60 L32,53 L32,84 L22,84 Z">
+        <aapt:attr name="android:fillColor">
+            <gradient
+                android:startX="22"
+                android:startY="53"
+                android:endX="32"
+                android:endY="84"
+                android:type="linear">
+                <item android:color="#34D399" android:offset="0.0" />
+                <item android:color="#10B981" android:offset="0.4" />
+                <item android:color="#047857" android:offset="1.0" />
+            </gradient>
+        </aapt:attr>
+    </path>
+
+    <!-- K LOGO - 5. Lower Stem Bottom Gold Accent -->
+    <path
+        android:pathData="M28,78 L37,72 L37,84 L28,84 Z">
+        <aapt:attr name="android:fillColor">
+            <gradient
+                android:startX="28"
+                android:startY="72"
+                android:endX="37"
+                android:endY="84"
+                android:type="linear">
+                <item android:color="#FBBF24" android:offset="0.0" />
+                <item android:color="#D97706" android:offset="1.0" />
+            </gradient>
+        </aapt:attr>
+    </path>
+
+    <!-- K LOGO - 6. Upper Diagonal Arm Top Gold Surface -->
+    <path
+        android:pathData="M34,48 L65,24 L76,24 L48,53 Z">
+        <aapt:attr name="android:fillColor">
+            <gradient
+                android:startX="34"
+                android:startY="24"
+                android:endX="76"
+                android:endY="53"
+                android:type="linear">
+                <item android:color="#FEF08A" android:offset="0.0" />
+                <item android:color="#FCD34D" android:offset="0.3" />
+                <item android:color="#F59E0B" android:offset="0.8" />
+                <item android:color="#D97706" android:offset="1.0" />
+            </gradient>
+        </aapt:attr>
+    </path>
+
+    <!-- K LOGO - 7. Upper Diagonal Arm Emerald Facet Underbelly -->
+    <path
+        android:pathData="M48,53 L76,24 L76,34 L54,55 Z">
+        <aapt:attr name="android:fillColor">
+            <gradient
+                android:startX="48"
+                android:startY="24"
+                android:endX="76"
+                android:endY="55"
+                android:type="linear">
+                <item android:color="#34D399" android:offset="0.0" />
+                <item android:color="#10B981" android:offset="0.6" />
+                <item android:color="#059669" android:offset="1.0" />
+            </gradient>
+        </aapt:attr>
+    </path>
+
+    <!-- K LOGO - 8. Lower Diagonal Leg Center Emerald Joint -->
+    <path
+        android:pathData="M37,50 L53,63 L45,74 L32,58 Z">
+        <aapt:attr name="android:fillColor">
+            <gradient
+                android:startX="32"
+                android:startY="50"
+                android:endX="53"
+                android:endY="74"
+                android:type="linear">
+                <item android:color="#34D399" android:offset="0.0" />
+                <item android:color="#10B981" android:offset="0.5" />
+                <item android:color="#059669" android:offset="1.0" />
+            </gradient>
+        </aapt:attr>
+    </path>
+
+    <!-- K LOGO - 9. Lower Diagonal Leg Gold Prism Foot -->
+    <path
+        android:pathData="M50,60 L76,84 L64,84 L43,68 Z">
+        <aapt:attr name="android:fillColor">
+            <gradient
+                android:startX="43"
+                android:startY="60"
+                android:endX="76"
+                android:endY="84"
+                android:type="linear">
+                <item android:color="#FEF08A" android:offset="0.0" />
+                <item android:color="#FBBF24" android:offset="0.4" />
+                <item android:color="#F59E0B" android:offset="0.8" />
+                <item android:color="#B45309" android:offset="1.0" />
+            </gradient>
+        </aapt:attr>
+    </path>
+
+    <!-- K LOGO - 10. Lower Diagonal Leg Bevel Bottom Edge -->
+    <path
+        android:pathData="M64,84 L76,84 L73,81 L60,81 Z">
+        <aapt:attr name="android:fillColor">
+            <gradient
+                android:startX="60"
+                android:startY="81"
+                android:endX="76"
+                android:endY="84"
+                android:type="linear">
+                <item android:color="#FFFBEB" android:offset="0.0" />
+                <item android:color="#FCD34D" android:offset="1.0" />
+            </gradient>
+        </aapt:attr>
+    </path>
+</vector>
