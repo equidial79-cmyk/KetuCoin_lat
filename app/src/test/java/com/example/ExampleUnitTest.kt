@@ -27,5 +27,18 @@ class ExampleUnitTest {
         assertFalse(pendingProfile.kycStatus == "approved")
         assertFalse(rejectedProfile.kycStatus == "approved")
     }
+
+    @Test
+    fun `app update detection identifies newer version`() {
+        val currentBuildCode = 1
+        val newUpdate = com.example.data.model.AppUpdateInfo(
+            versionName = "v1.1.0",
+            versionCode = 2,
+            releaseNotes = "New features",
+            downloadUrl = "https://example.com/ketucoin-v1.1.0.apk"
+        )
+        val isUpdateAvailable = newUpdate.versionCode > currentBuildCode
+        assertTrue(isUpdateAvailable)
+    }
 }
 

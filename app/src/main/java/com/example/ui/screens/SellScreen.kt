@@ -325,13 +325,25 @@ fun SellScreen(
                                     )
                                 }
 
-                                currentProfile?.bankAccount?.let { bank ->
+                                val userBank = currentProfile?.bankAccount
+                                if (userBank != null && userBank.accountNumber.isNotBlank()) {
                                     Spacer(modifier = Modifier.height(8.dp))
                                     Text(
-                                        text = "Payout to: ${bank.bankName} (A/C: •••• ${bank.accountNumber.takeLast(4)})",
+                                        text = "Payout to: ${userBank.bankName} (A/C: •••• ${userBank.accountNumber.takeLast(4)})",
                                         fontSize = 11.sp,
                                         color = AccentCyan
                                     )
+                                } else {
+                                    Spacer(modifier = Modifier.height(8.dp))
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        Icon(Icons.Default.Warning, contentDescription = null, tint = Color(0xFFF59E0B), modifier = Modifier.size(14.dp))
+                                        Spacer(modifier = Modifier.width(4.dp))
+                                        Text(
+                                            text = "No bank account added yet. Go to Profile to link your bank for INR payouts.",
+                                            fontSize = 11.sp,
+                                            color = Color(0xFFF59E0B)
+                                        )
+                                    }
                                 }
                             }
                         }
@@ -340,7 +352,10 @@ fun SellScreen(
 
                         Button(
                             onClick = {
-                                if (sellAmount <= 0.0) {
+                                val hasBank = currentProfile?.bankAccount?.accountNumber?.isNotBlank() == true
+                                if (!hasBank) {
+                                    Toast.makeText(context, "Please add your bank account in Profile before selling", Toast.LENGTH_LONG).show()
+                                } else if (sellAmount <= 0.0) {
                                     Toast.makeText(context, "Please enter amount", Toast.LENGTH_SHORT).show()
                                 } else if (sellAmount > availableBalance) {
                                     Toast.makeText(context, "Amount exceeds available balance", Toast.LENGTH_SHORT).show()
@@ -459,6 +474,49 @@ fun SellScreen(
                             )
                         )
 
+                        Spacer(modifier = Modifier.height(10.dp))
+
+                        // Estimated payout for external transfer
+                        val extUserBank = currentProfile?.bankAccount
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(10.dp))
+                                .background(NavyDark)
+                                .padding(12.dp)
+                        ) {
+                            Column {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Text("Estimated Payout (INR):", fontSize = 12.sp, color = TextMuted)
+                                    Text(
+                                        text = "₹${formatInr(estimatedPayoutInr)}",
+                                        fontSize = 17.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = GoldPrimary
+                                    )
+                                }
+                                if (extUserBank != null && extUserBank.accountNumber.isNotBlank()) {
+                                    Spacer(modifier = Modifier.height(4.dp))
+                                    Text(
+                                        text = "Payout to: ${extUserBank.bankName} (•••• ${extUserBank.accountNumber.takeLast(4)})",
+                                        fontSize = 11.sp,
+                                        color = AccentCyan
+                                    )
+                                } else {
+                                    Spacer(modifier = Modifier.height(4.dp))
+                                    Text(
+                                        text = "⚠️ No bank linked. Add bank account in Profile for settlement.",
+                                        fontSize = 11.sp,
+                                        color = Color(0xFFF59E0B)
+                                    )
+                                }
+                            }
+                        }
+
                         Spacer(modifier = Modifier.height(14.dp))
 
                         // Proof of Payment Upload
@@ -496,8 +554,13 @@ fun SellScreen(
 
                         Button(
                             onClick = {
-                                if (sellAmount <= 0.0) {
+                                val hasBank = currentProfile?.bankAccount?.accountNumber?.isNotBlank() == true
+                                if (!hasBank) {
+                                    Toast.makeText(context, "Please add your bank account in Profile before selling", Toast.LENGTH_LONG).show()
+                                } else if (sellAmount <= 0.0) {
                                     Toast.makeText(context, "Enter amount sent", Toast.LENGTH_SHORT).show()
+                                } else if (proofImageBytes == null) {
+                                    Toast.makeText(context, "Please upload transaction proof screenshot", Toast.LENGTH_SHORT).show()
                                 } else {
                                     viewModel.submitExternalSell(selectedCurrency, sellAmount, proofImageBytes) {
                                         sellAmountText = ""

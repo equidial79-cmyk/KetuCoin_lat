@@ -97,3 +97,16 @@ data class CryptoTransaction(
     @SerialName("network_fee") val networkFee: Double = 0.0,
     @SerialName("created_at") val createdAt: String = ""
 )
+
+@Serializable
+data class AppUpdateInfo(
+    val id: String = "",
+    @SerialName("version_name") val versionName: String = "1.0",
+    @SerialName("version_code") val versionCode: Int = 1,
+    @SerialName("release_notes") val releaseNotes: String = "",
+    @SerialName("download_url") val downloadUrl: String = "",
+    @SerialName("is_force_update") val isForceUpdate: Boolean = false,
+    @SerialName("released_at") val releasedAt: String = "",
+    @SerialName("file_size_mb") val fileSizeMb: Double = 14.5
+)
+

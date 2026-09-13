@@ -22,6 +22,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ReceiptLong
+import androidx.compose.material.icons.filled.AddCard
 import androidx.compose.material.icons.filled.ArrowDownward
 import androidx.compose.material.icons.filled.ArrowUpward
 import androidx.compose.material.icons.filled.Badge
@@ -267,23 +268,96 @@ fun WalletScreen(
                     fontWeight = FontWeight.Bold,
                     color = TextPrimary
                 )
-                TextButton(
-                    onClick = { viewModel.openTransactionHistoryModal() },
-                    modifier = Modifier.testTag("wallet_view_history_link")
-                ) {
-                    Icon(
-                        imageVector = Icons.AutoMirrored.Filled.ReceiptLong,
-                        contentDescription = null,
-                        tint = GoldPrimary,
-                        modifier = Modifier.size(16.dp)
-                    )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    IconButton(
+                        onClick = { viewModel.refreshUserData() },
+                        modifier = Modifier.size(32.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Refresh,
+                            contentDescription = "Refresh Wallets",
+                            tint = AccentCyan,
+                            modifier = Modifier.size(18.dp)
+                        )
+                    }
                     Spacer(modifier = Modifier.width(4.dp))
-                    Text(
-                        text = "History",
-                        fontSize = 12.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = GoldPrimary
-                    )
+                    TextButton(
+                        onClick = { viewModel.openTransactionHistoryModal() },
+                        modifier = Modifier.testTag("wallet_view_history_link")
+                    ) {
+                        Icon(
+                            imageVector = Icons.AutoMirrored.Filled.ReceiptLong,
+                            contentDescription = null,
+                            tint = GoldPrimary,
+                            modifier = Modifier.size(16.dp)
+                        )
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text(
+                            text = "History",
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = GoldPrimary
+                        )
+                    }
+                }
+            }
+        }
+
+        // Empty Wallets State
+        if (wallets.isEmpty()) {
+            item {
+                Card(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(16.dp))
+                        .border(1.dp, NavyCardBorder, RoundedCornerShape(16.dp)),
+                    colors = CardDefaults.cardColors(containerColor = NavyCard)
+                ) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(28.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(56.dp)
+                                .clip(CircleShape)
+                                .background(NavyDark),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.AddCard,
+                                contentDescription = null,
+                                tint = GoldPrimary,
+                                modifier = Modifier.size(28.dp)
+                            )
+                        }
+                        Spacer(modifier = Modifier.height(14.dp))
+                        Text(
+                            text = "No Wallets Found",
+                            fontSize = 16.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = TextPrimary
+                        )
+                        Spacer(modifier = Modifier.height(6.dp))
+                        Text(
+                            text = "Tap below to initialize your real Supabase crypto wallets for USDT, BTC, ETH, and SOL.",
+                            fontSize = 13.sp,
+                            color = TextSecondary,
+                            textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                        )
+                        Spacer(modifier = Modifier.height(16.dp))
+                        Button(
+                            onClick = { viewModel.refreshUserData() },
+                            colors = ButtonDefaults.buttonColors(containerColor = GoldPrimary, contentColor = Color.Black),
+                            shape = RoundedCornerShape(10.dp)
+                        ) {
+                            Icon(Icons.Default.Refresh, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text("Initialize / Sync Wallets", fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                        }
+                    }
                 }
             }
         }
@@ -471,10 +545,20 @@ fun WalletScreen(
                 Button(
                     onClick = {
                         val amount = sendAmount.toDoubleOrNull() ?: 0.0
-                        viewModel.sendCrypto(sendCurrency, sendAddress, amount, sendPin)
-                        sendAddress = ""
-                        sendAmount = ""
-                        sendPin = ""
+                        if (sendAddress.isBlank()) {
+                            Toast.makeText(context, "Please enter recipient address", Toast.LENGTH_SHORT).show()
+                        } else if (amount <= 0.0) {
+                            Toast.makeText(context, "Please enter a valid amount", Toast.LENGTH_SHORT).show()
+                        } else if (amount > availableBal) {
+                            Toast.makeText(context, "Amount exceeds available balance ($availableBal $sendCurrency)", Toast.LENGTH_SHORT).show()
+                        } else if (sendPin.length != 4) {
+                            Toast.makeText(context, "Please enter your 4-digit security PIN", Toast.LENGTH_SHORT).show()
+                        } else {
+                            viewModel.sendCrypto(sendCurrency, sendAddress, amount, sendPin)
+                            sendAddress = ""
+                            sendAmount = ""
+                            sendPin = ""
+                        }
                     },
                     colors = ButtonDefaults.buttonColors(containerColor = GoldPrimary, contentColor = Color.Black),
                     modifier = Modifier.testTag("send_confirm_button")

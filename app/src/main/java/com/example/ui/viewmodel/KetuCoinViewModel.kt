@@ -1,7 +1,13 @@
 package com.example.ui.viewmodel
 
+import android.app.DownloadManager
+import android.content.Context
+import android.content.Intent
+import android.net.Uri
+import android.os.Environment
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.example.data.model.AppUpdateInfo
 import com.example.data.model.BankAccount
 import com.example.data.model.CryptoMarketItem
 import com.example.data.model.CryptoTransaction
@@ -11,6 +17,7 @@ import com.example.data.model.SupportMessage
 import com.example.data.model.SystemDepositAddress
 import com.example.data.model.Wallet
 import com.example.data.repository.KetuCoinRepository
+import com.example.util.NotificationHelper
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -31,6 +38,7 @@ class KetuCoinViewModel(
     val supportMessages: StateFlow<List<SupportMessage>> = repository.supportMessages
     val systemDepositAddresses: StateFlow<List<SystemDepositAddress>> = repository.systemDepositAddresses
     val transactions: StateFlow<List<CryptoTransaction>> = repository.transactions
+    val latestAppUpdate: StateFlow<AppUpdateInfo?> = repository.latestAppUpdate
 
     // Network connectivity state
     private val _isConnected = MutableStateFlow(true)
@@ -70,7 +78,10 @@ class KetuCoinViewModel(
         val selectedWalletCurrency: String = "USDT",
         val showSendSuccessWindow: Boolean = false,
         val lastSendTransaction: CryptoTransaction? = null,
-        val showTransactionHistoryModal: Boolean = false
+        val showTransactionHistoryModal: Boolean = false,
+        val showUpdateDetailDialog: Boolean = false,
+        val showAdminPushUpdateDialog: Boolean = false,
+        val isCheckingUpdate: Boolean = false
     )
 
     fun clearMessages() {
@@ -345,11 +356,150 @@ class KetuCoinViewModel(
         }
     }
 
+    // Refresh User Data & Wallets from Supabase
+    fun refreshUserData() {
+        _uiState.value = _uiState.value.copy(isLoading = true, errorMessage = null)
+        viewModelScope.launch {
+            val result = repository.refreshUserData()
+            result.onSuccess {
+                _uiState.value = _uiState.value.copy(
+                    isLoading = false,
+                    successMessage = "Wallets and data synced with server"
+                )
+            }.onFailure { e ->
+                _uiState.value = _uiState.value.copy(
+                    isLoading = false,
+                    errorMessage = e.message ?: "Failed to refresh wallets"
+                )
+            }
+        }
+    }
+
     // Support Messaging
     fun sendSupportMessage(msgText: String) {
         if (msgText.isBlank()) return
         viewModelScope.launch {
             repository.sendSupportMessage(msgText)
+        }
+    }
+
+    // App Update Dialog Actions
+    fun openUpdateDetailDialog() {
+        _uiState.value = _uiState.value.copy(showUpdateDetailDialog = true)
+    }
+
+    fun closeUpdateDetailDialog() {
+        _uiState.value = _uiState.value.copy(showUpdateDetailDialog = false)
+    }
+
+    fun openAdminPushUpdateDialog() {
+        _uiState.value = _uiState.value.copy(showAdminPushUpdateDialog = true)
+    }
+
+    fun closeAdminPushUpdateDialog() {
+        _uiState.value = _uiState.value.copy(showAdminPushUpdateDialog = false)
+    }
+
+    fun checkForUpdates(context: Context? = null) {
+        _uiState.value = _uiState.value.copy(isCheckingUpdate = true)
+        viewModelScope.launch {
+            val result = repository.checkForUpdates()
+            _uiState.value = _uiState.value.copy(isCheckingUpdate = false)
+            result.onSuccess { update ->
+                if (update != null && update.versionCode > 1) {
+                    _uiState.value = _uiState.value.copy(
+                        successMessage = "New update available: ${update.versionName}!"
+                    )
+                    if (context != null) {
+                        NotificationHelper.showUpdateNotification(context, update)
+                    }
+                } else {
+                    _uiState.value = _uiState.value.copy(
+                        successMessage = "KetuCoin is already up to date (v1.0)"
+                    )
+                }
+            }.onFailure {
+                _uiState.value = _uiState.value.copy(
+                    successMessage = "KetuCoin is up to date (v1.0)"
+                )
+            }
+        }
+    }
+
+    fun pushAppUpdate(
+        context: Context,
+        versionName: String,
+        versionCode: Int,
+        releaseNotes: String,
+        downloadUrl: String,
+        isForce: Boolean
+    ) {
+        _uiState.value = _uiState.value.copy(isLoading = true)
+        viewModelScope.launch {
+            val result = repository.pushAppUpdate(
+                versionName = versionName,
+                versionCode = versionCode,
+                releaseNotes = releaseNotes,
+                downloadUrl = downloadUrl,
+                isForceUpdate = isForce
+            )
+            _uiState.value = _uiState.value.copy(isLoading = false, showAdminPushUpdateDialog = false)
+            result.onSuccess { update ->
+                // Trigger system push notification immediately
+                NotificationHelper.showUpdateNotification(context, update)
+                _uiState.value = _uiState.value.copy(
+                    successMessage = "🚀 Update ${update.versionName} pushed to all devices with push notification!"
+                )
+            }.onFailure { e ->
+                _uiState.value = _uiState.value.copy(
+                    errorMessage = e.message ?: "Failed to push update"
+                )
+            }
+        }
+    }
+
+    fun downloadAndInstallUpdate(context: Context, update: AppUpdateInfo) {
+        try {
+            if (update.downloadUrl.isNotBlank() && (update.downloadUrl.startsWith("http://") || update.downloadUrl.startsWith("https://"))) {
+                try {
+                    val request = DownloadManager.Request(Uri.parse(update.downloadUrl))
+                        .setTitle("KetuCoin ${update.versionName} Update")
+                        .setDescription("Downloading KetuCoin APK package...")
+                        .setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
+                        .setDestinationInExternalPublicDir(Environment.DIRECTORY_DOWNLOADS, "KetuCoin_${update.versionName}.apk")
+                    val dm = context.getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager
+                    dm.enqueue(request)
+                } catch (e: Exception) {
+                    val browserIntent = Intent(Intent.ACTION_VIEW, Uri.parse(update.downloadUrl)).apply {
+                        flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                    }
+                    context.startActivity(browserIntent)
+                }
+
+                _uiState.value = _uiState.value.copy(
+                    showUpdateDetailDialog = false,
+                    successMessage = "Starting download for KetuCoin ${update.versionName}. Check notification bar."
+                )
+            } else {
+                _uiState.value = _uiState.value.copy(
+                    errorMessage = "Download URL is invalid or empty."
+                )
+            }
+        } catch (e: Exception) {
+            _uiState.value = _uiState.value.copy(
+                errorMessage = "Unable to start download: ${e.message}"
+            )
+        }
+    }
+
+    fun toggleAdminRole() {
+        val currentRole = currentProfile.value?.role ?: "user"
+        val nextRole = if (currentRole == "admin") "user" else "admin"
+        viewModelScope.launch {
+            repository.updateUserRole(nextRole)
+            _uiState.value = _uiState.value.copy(
+                successMessage = "Switched to ${nextRole.uppercase()} mode"
+            )
         }
     }
 }

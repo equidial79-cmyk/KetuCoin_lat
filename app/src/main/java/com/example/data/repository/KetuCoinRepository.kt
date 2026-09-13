@@ -1,6 +1,7 @@
 package com.example.data.repository
 
 import android.util.Log
+import com.example.data.model.AppUpdateInfo
 import com.example.data.model.BankAccount
 import com.example.data.model.CryptoMarketItem
 import com.example.data.model.CryptoTransaction
@@ -67,7 +68,21 @@ class KetuCoinRepository(
     private val _isUserLoggedIn = MutableStateFlow(false)
     val isUserLoggedIn = _isUserLoggedIn.asStateFlow()
 
+    private val _latestAppUpdate = MutableStateFlow<AppUpdateInfo?>(null)
+    val latestAppUpdate = _latestAppUpdate.asStateFlow()
+
+    private var onNewUpdateListener: ((AppUpdateInfo) -> Unit)? = null
+
+    fun setOnNewUpdateListener(listener: (AppUpdateInfo) -> Unit) {
+        onNewUpdateListener = listener
+    }
+
     init {
+        // Initial check for latest app updates
+        scope.launch {
+            checkForUpdates()
+        }
+
         // Initialize default system deposit addresses for external transfers
         _systemDepositAddresses.value = listOf(
             SystemDepositAddress(
@@ -182,7 +197,7 @@ class KetuCoinRepository(
                 Log.w(TAG, "Supabase Auth signup remote call note: ${e.message}. Initializing state.")
             }
 
-            // Create initial profile row and 4 wallet rows
+            // Create initial profile row - no fake bank accounts or fake balances
             val defaultPinHash = HashUtil.hashPin("1234") // Default test PIN 1234
             val newProfile = Profile(
                 id = userId,
@@ -190,15 +205,11 @@ class KetuCoinRepository(
                 role = "user",
                 securityPin = defaultPinHash,
                 kycStatus = "unverified",
-                bankAccount = BankAccount(
-                    accountNumber = "987654321098",
-                    ifscCode = "HDFC0001234",
-                    bankName = "HDFC Bank",
-                    holderName = email.substringBefore("@").replaceFirstChar { it.uppercase() }
-                )
+                bankAccount = null // Real users start with no bank account until they link their own
             )
 
-            val initialWallets = createDefaultWallets(userId)
+            // Real initial wallets with ZERO balance
+            val initialWallets = createRealWallets(userId)
 
             // Attempt Supabase Postgrest remote insert
             try {
@@ -207,23 +218,23 @@ class KetuCoinRepository(
                     supabase.from("wallets").insert(wallet)
                 }
             } catch (e: Exception) {
-                Log.w(TAG, "Postgrest insert profile/wallets fallback: ${e.message}")
+                Log.w(TAG, "Postgrest insert profile/wallets: ${e.message}")
             }
 
             _currentProfile.value = newProfile
             _wallets.value = initialWallets
             _isUserLoggedIn.value = true
 
-            // Set up initial welcome support message
+            // Set up welcome support message
             val welcomeMsg = SupportMessage(
                 id = UUID.randomUUID().toString(),
                 userId = userId,
                 senderRole = "admin",
-                message = "Welcome to KetuCoin! Your fast & secure Crypto to INR exchange desk. How can we help you today?",
+                message = "Welcome to KetuCoin! Your crypto to INR exchange desk. Link your bank in Profile to receive real INR payouts.",
                 createdAt = getCurrentIsoTime()
             )
             _supportMessages.value = listOf(welcomeMsg)
-            _transactions.value = createDefaultTransactions(userId)
+            _transactions.value = emptyList() // Real users start with empty real transaction history
 
             // Setup Realtime subscription
             setupRealtimeSubscriptions(userId)
@@ -265,15 +276,10 @@ class KetuCoinRepository(
                 role = "user",
                 securityPin = HashUtil.hashPin("1234"),
                 kycStatus = "unverified",
-                bankAccount = BankAccount(
-                    accountNumber = "987654321098",
-                    ifscCode = "HDFC0001234",
-                    bankName = "HDFC Bank",
-                    holderName = email.substringBefore("@").replaceFirstChar { it.uppercase() }
-                )
+                bankAccount = null // Real profile has null bank until user links one
             )
 
-            // Load or init wallets
+            // Load real wallets from Supabase
             var loadedWallets: List<Wallet> = emptyList()
             try {
                 loadedWallets = supabase.from("wallets").select {
@@ -285,13 +291,24 @@ class KetuCoinRepository(
                 Log.w(TAG, "Postgrest fetch wallets: ${e.message}")
             }
 
-            val wallets = if (loadedWallets.isNotEmpty()) loadedWallets else createDefaultWallets(profile.id)
+            val wallets = if (loadedWallets.isNotEmpty()) {
+                loadedWallets
+            } else {
+                val realZeroWallets = createRealWallets(profile.id)
+                // Try persisting to Supabase
+                try {
+                    realZeroWallets.forEach { w -> supabase.from("wallets").insert(w) }
+                } catch (e: Exception) {
+                    Log.w(TAG, "Init wallets insert: ${e.message}")
+                }
+                realZeroWallets
+            }
 
             _currentProfile.value = profile
             _wallets.value = wallets
             _isUserLoggedIn.value = true
 
-            // Set default messages if empty
+            // Set welcome message if empty
             if (_supportMessages.value.isEmpty()) {
                 _supportMessages.value = listOf(
                     SupportMessage(
@@ -304,7 +321,7 @@ class KetuCoinRepository(
                 )
             }
 
-            // Load or init transactions
+            // Load real transactions from Supabase
             var loadedTransactions: List<CryptoTransaction> = emptyList()
             try {
                 loadedTransactions = supabase.from("transactions").select {
@@ -316,7 +333,7 @@ class KetuCoinRepository(
                 Log.w(TAG, "Postgrest fetch transactions: ${e.message}")
             }
 
-            _transactions.value = if (loadedTransactions.isNotEmpty()) loadedTransactions else createDefaultTransactions(profile.id)
+            _transactions.value = loadedTransactions // Only real transactions from DB
 
             setupRealtimeSubscriptions(profile.id)
 
@@ -325,6 +342,108 @@ class KetuCoinRepository(
             Log.e(TAG, "Sign in error: ${e.message}", e)
             Result.failure(e)
         }
+    }
+
+    suspend fun refreshUserData(): Result<Boolean> = withContext(Dispatchers.IO) {
+        val profile = _currentProfile.value ?: return@withContext Result.failure(Exception("Not logged in"))
+        try {
+            // Fetch updated profile
+            val freshProfile = supabase.from("profiles").select {
+                filter { eq("id", profile.id) }
+            }.decodeSingleOrNull<Profile>()
+            if (freshProfile != null) {
+                _currentProfile.value = freshProfile
+            }
+
+            // Fetch updated wallets
+            val freshWallets = supabase.from("wallets").select {
+                filter { eq("user_id", profile.id) }
+            }.decodeList<Wallet>()
+            if (freshWallets.isNotEmpty()) {
+                _wallets.value = freshWallets
+            }
+
+            // Fetch updated transactions
+            val freshTransactions = supabase.from("transactions").select {
+                filter { eq("user_id", profile.id) }
+            }.decodeList<CryptoTransaction>()
+            _transactions.value = freshTransactions
+
+            Result.success(true)
+        } catch (e: Exception) {
+            Log.w(TAG, "Refresh user data error: ${e.message}")
+            Result.failure(e)
+        }
+    }
+
+    // App Update Management
+    suspend fun checkForUpdates(): Result<AppUpdateInfo?> = withContext(Dispatchers.IO) {
+        try {
+            val updates = supabase.from("app_updates").select {
+                order(column = "version_code", order = io.github.jan.supabase.postgrest.query.Order.DESCENDING)
+                limit(1)
+            }.decodeList<AppUpdateInfo>()
+
+            val latest = updates.firstOrNull()
+            if (latest != null) {
+                val previous = _latestAppUpdate.value
+                _latestAppUpdate.value = latest
+                // Trigger notification if newer than previous
+                if (previous == null || latest.versionCode > previous.versionCode) {
+                    onNewUpdateListener?.invoke(latest)
+                }
+            }
+            Result.success(latest ?: _latestAppUpdate.value)
+        } catch (e: Exception) {
+            Log.w(TAG, "Check updates remote: ${e.message}")
+            Result.success(_latestAppUpdate.value)
+        }
+    }
+
+    suspend fun pushAppUpdate(
+        versionName: String,
+        versionCode: Int,
+        releaseNotes: String,
+        downloadUrl: String,
+        isForceUpdate: Boolean = false,
+        fileSizeMb: Double = 14.8
+    ): Result<AppUpdateInfo> = withContext(Dispatchers.IO) {
+        val update = AppUpdateInfo(
+            id = UUID.randomUUID().toString(),
+            versionName = versionName,
+            versionCode = versionCode,
+            releaseNotes = releaseNotes,
+            downloadUrl = downloadUrl,
+            isForceUpdate = isForceUpdate,
+            releasedAt = getCurrentIsoTime(),
+            fileSizeMb = fileSizeMb
+        )
+
+        try {
+            supabase.from("app_updates").insert(update)
+        } catch (e: Exception) {
+            Log.w(TAG, "Push app update remote error: ${e.message}")
+        }
+
+        _latestAppUpdate.value = update
+        onNewUpdateListener?.invoke(update)
+
+        Result.success(update)
+    }
+
+    suspend fun updateUserRole(newRole: String): Result<Boolean> = withContext(Dispatchers.IO) {
+        val profile = _currentProfile.value ?: return@withContext Result.failure(Exception("Not logged in"))
+        try {
+            supabase.from("profiles").update({
+                set("role", newRole)
+            }) {
+                filter { eq("id", profile.id) }
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Update role remote note: ${e.message}")
+        }
+        _currentProfile.value = _currentProfile.value?.copy(role = newRole)
+        Result.success(true)
     }
 
     fun signOut() {
@@ -343,46 +462,14 @@ class KetuCoinRepository(
         }
     }
 
-    private fun createDefaultTransactions(userId: String): List<CryptoTransaction> {
-        return listOf(
-            CryptoTransaction(
-                id = "tx-sample-1",
-                userId = userId,
-                type = "RECEIVE",
-                currency = "USDT",
-                amount = 1250.0,
-                inrValue = 113125.0,
-                recipientAddress = "0x3fA28c1192808E5173CdF44F7b03b6CeD543C12a",
-                network = "TRC20",
-                status = "COMPLETED",
-                txHash = "0x8f2d59b049d32cb5e20d88bcf04245648fef9b8032c10bcf",
-                networkFee = 0.0,
-                createdAt = "Today, 10:24 AM"
-            ),
-            CryptoTransaction(
-                id = "tx-sample-2",
-                userId = userId,
-                type = "RECEIVE",
-                currency = "BTC",
-                amount = 0.045,
-                inrValue = 351000.0,
-                recipientAddress = "bc1qar0srrr7xfkvy5l643lydnw9re59gtzzwf5mdq",
-                network = "Bitcoin Network",
-                status = "COMPLETED",
-                txHash = "0x4b7c6218da3a129df839800d046c82ff306a445e99824212",
-                networkFee = 0.0,
-                createdAt = "Yesterday, 04:15 PM"
-            )
-        )
-    }
-
-    private fun createDefaultWallets(userId: String): List<Wallet> {
+    // Real wallets starting with zero balance and real crypto deposit addresses
+    private fun createRealWallets(userId: String): List<Wallet> {
         return listOf(
             Wallet(
                 id = "w-usdt-$userId",
                 userId = userId,
                 currency = "USDT",
-                balance = 1250.0,
+                balance = 0.0,
                 assignedDepositAddress = "0x3fA28c1192808E5173CdF44F7b03b6CeD543C12a",
                 assignedQrUrl = "https://api.qrserver.com/v1/create-qr-code/?size=250x250&data=0x3fA28c1192808E5173CdF44F7b03b6CeD543C12a"
             ),
@@ -390,7 +477,7 @@ class KetuCoinRepository(
                 id = "w-btc-$userId",
                 userId = userId,
                 currency = "BTC",
-                balance = 0.045,
+                balance = 0.0,
                 assignedDepositAddress = "bc1qar0srrr7xfkvy5l643lydnw9re59gtzzwf5mdq",
                 assignedQrUrl = "https://api.qrserver.com/v1/create-qr-code/?size=250x250&data=bc1qar0srrr7xfkvy5l643lydnw9re59gtzzwf5mdq"
             ),
@@ -398,7 +485,7 @@ class KetuCoinRepository(
                 id = "w-eth-$userId",
                 userId = userId,
                 currency = "ETH",
-                balance = 0.85,
+                balance = 0.0,
                 assignedDepositAddress = "0x71C8A1054C19c2f6d2E7E25Eb8c27800B29b3501",
                 assignedQrUrl = "https://api.qrserver.com/v1/create-qr-code/?size=250x250&data=0x71C8A1054C19c2f6d2E7E25Eb8c27800B29b3501"
             ),
@@ -406,7 +493,7 @@ class KetuCoinRepository(
                 id = "w-sol-$userId",
                 userId = userId,
                 currency = "SOL",
-                balance = 6.20,
+                balance = 0.0,
                 assignedDepositAddress = "9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM",
                 assignedQrUrl = "https://api.qrserver.com/v1/create-qr-code/?size=250x250&data=9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM"
             )
@@ -422,6 +509,9 @@ class KetuCoinRepository(
 
                 val chatChannel = supabase.realtime.channel("public:support_messages:$userId")
                 chatChannel.subscribe()
+
+                val updateChannel = supabase.realtime.channel("public:app_updates")
+                updateChannel.subscribe()
                 Log.d(TAG, "Realtime channels subscribed for user: $userId")
             } catch (e: Exception) {
                 Log.w(TAG, "Supabase realtime-kt subscription note: ${e.message}")
