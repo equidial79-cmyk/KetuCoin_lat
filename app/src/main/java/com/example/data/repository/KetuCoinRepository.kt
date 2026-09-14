@@ -400,52 +400,6 @@ class KetuCoinRepository(
         }
     }
 
-    suspend fun pushAppUpdate(
-        versionName: String,
-        versionCode: Int,
-        releaseNotes: String,
-        downloadUrl: String,
-        isForceUpdate: Boolean = false,
-        fileSizeMb: Double = 14.8
-    ): Result<AppUpdateInfo> = withContext(Dispatchers.IO) {
-        val update = AppUpdateInfo(
-            id = UUID.randomUUID().toString(),
-            versionName = versionName,
-            versionCode = versionCode,
-            releaseNotes = releaseNotes,
-            downloadUrl = downloadUrl,
-            isForceUpdate = isForceUpdate,
-            releasedAt = getCurrentIsoTime(),
-            fileSizeMb = fileSizeMb
-        )
-
-        try {
-            supabase.from("app_updates").insert(update)
-        } catch (e: Exception) {
-            Log.w(TAG, "Push app update remote error: ${e.message}")
-        }
-
-        _latestAppUpdate.value = update
-        onNewUpdateListener?.invoke(update)
-
-        Result.success(update)
-    }
-
-    suspend fun updateUserRole(newRole: String): Result<Boolean> = withContext(Dispatchers.IO) {
-        val profile = _currentProfile.value ?: return@withContext Result.failure(Exception("Not logged in"))
-        try {
-            supabase.from("profiles").update({
-                set("role", newRole)
-            }) {
-                filter { eq("id", profile.id) }
-            }
-        } catch (e: Exception) {
-            Log.w(TAG, "Update role remote note: ${e.message}")
-        }
-        _currentProfile.value = _currentProfile.value?.copy(role = newRole)
-        Result.success(true)
-    }
-
     fun signOut() {
         scope.launch {
             try {

@@ -30,7 +30,6 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Chat
 import androidx.compose.material.icons.filled.AccountBalance
-import androidx.compose.material.icons.filled.AdminPanelSettings
 import androidx.compose.material.icons.filled.Badge
 import androidx.compose.material.icons.filled.CameraAlt
 import androidx.compose.material.icons.filled.CheckCircle
@@ -44,7 +43,6 @@ import androidx.compose.material.icons.filled.Logout
 import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Refresh
-import androidx.compose.material.icons.filled.RocketLaunch
 import androidx.compose.material.icons.filled.SystemUpdate
 import androidx.compose.material.icons.filled.Update
 import androidx.compose.material.icons.filled.VerifiedUser
@@ -133,19 +131,6 @@ fun ProfileScreen(
         }
     }
 
-    // Admin Push Update form state
-    var updateVersionName by remember { mutableStateOf("v1.1.0") }
-    var updateVersionCode by remember { mutableStateOf("2") }
-    var updateDownloadUrl by remember { mutableStateOf("https://github.com/ketucoin/releases/download/v1.1.0/ketucoin-v1.1.0.apk") }
-    var updateReleaseNotes by remember {
-        mutableStateOf(
-            "• Instant INR settlements via IMPS/NEFT\n" +
-            "• Solana (SOL) multi-chain deposit address\n" +
-            "• Real-time OTC rate lock during checkout\n" +
-            "• Security patches and performance boosts"
-        )
-    }
-    var updateIsForce by remember { mutableStateOf(false) }
 
     // Bank Account Edit state
     var editAccNum by remember { mutableStateOf(currentProfile?.bankAccount?.accountNumber ?: "") }
@@ -610,82 +595,6 @@ fun ProfileScreen(
             }
         }
 
-        // ADMIN DESK: APP RELEASE & PUSH NOTIFICATIONS
-        item {
-            val isAdmin = currentProfile?.role == "admin"
-            Card(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(16.dp))
-                    .border(1.dp, if (isAdmin) AccentCyan.copy(alpha = 0.5f) else NavyCardBorder, RoundedCornerShape(16.dp))
-                    .testTag("admin_release_card"),
-                colors = CardDefaults.cardColors(containerColor = NavyCard)
-            ) {
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(16.dp)
-                ) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.SpaceBetween
-                    ) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Icon(Icons.Default.AdminPanelSettings, contentDescription = null, tint = AccentCyan)
-                            Spacer(modifier = Modifier.width(10.dp))
-                            Column {
-                                Text("Admin Release Desk", fontWeight = FontWeight.Bold, fontSize = 15.sp, color = TextPrimary)
-                                Text("Push updates & alerts to all users", fontSize = 11.sp, color = TextSecondary)
-                            }
-                        }
-
-                        TextButton(
-                            onClick = { viewModel.toggleAdminRole() },
-                            modifier = Modifier.testTag("toggle_admin_mode_button")
-                        ) {
-                            Text(
-                                text = if (isAdmin) "Role: ADMIN" else "Role: USER (Tap to Switch)",
-                                fontSize = 11.sp,
-                                fontWeight = FontWeight.Bold,
-                                color = if (isAdmin) AccentCyan else TextSecondary
-                            )
-                        }
-                    }
-
-                    Spacer(modifier = Modifier.height(10.dp))
-
-                    if (isAdmin) {
-                        Text(
-                            text = "As Administrator, publishing an update broadcasts the new version to all user devices and dispatches real-time push notifications prompting users to download and install the APK.",
-                            fontSize = 12.sp,
-                            color = TextSecondary,
-                            lineHeight = 16.sp
-                        )
-
-                        Spacer(modifier = Modifier.height(14.dp))
-
-                        Button(
-                            onClick = { viewModel.openAdminPushUpdateDialog() },
-                            modifier = Modifier.fillMaxWidth().height(46.dp).testTag("push_app_update_button"),
-                            shape = RoundedCornerShape(12.dp),
-                            colors = ButtonDefaults.buttonColors(containerColor = AccentCyan, contentColor = Color.Black)
-                        ) {
-                            Icon(Icons.Default.RocketLaunch, contentDescription = null, modifier = Modifier.size(18.dp))
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Text("Push New App Update to All Devices", fontWeight = FontWeight.Bold, fontSize = 13.sp)
-                        }
-                    } else {
-                        Text(
-                            text = "Admin update publishing controls are reserved for administrators. Tap 'Role: USER' above to switch to Admin mode for testing and deployment.",
-                            fontSize = 12.sp,
-                            color = TextMuted
-                        )
-                    }
-                }
-            }
-        }
-
         // Sign Out Button
         item {
             OutlinedButton(
@@ -887,141 +796,6 @@ fun ProfileScreen(
             },
             dismissButton = {
                 TextButton(onClick = { viewModel.closeChangePinModal() }) {
-                    Text("Cancel", color = TextSecondary)
-                }
-            },
-            containerColor = NavyCard,
-            shape = RoundedCornerShape(16.dp)
-        )
-    }
-
-    // ADMIN PUSH UPDATE MODAL
-    if (uiState.showAdminPushUpdateDialog) {
-        AlertDialog(
-            onDismissRequest = { viewModel.closeAdminPushUpdateDialog() },
-            title = {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Icon(Icons.Default.RocketLaunch, contentDescription = null, tint = AccentCyan)
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Text("Push App Update", fontWeight = FontWeight.Bold, fontSize = 18.sp, color = TextPrimary)
-                }
-            },
-            text = {
-                Column(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalArrangement = Arrangement.spacedBy(10.dp)
-                ) {
-                    Text(
-                        text = "Broadcasting will send real-time push notifications to all KetuCoin users, prompting them to download and install the new APK release.",
-                        fontSize = 12.sp,
-                        color = TextSecondary
-                    )
-
-                    OutlinedTextField(
-                        value = updateVersionName,
-                        onValueChange = { updateVersionName = it },
-                        label = { Text("Version Name (e.g. v1.1.0)") },
-                        singleLine = true,
-                        modifier = Modifier.fillMaxWidth().testTag("update_version_name_input"),
-                        colors = OutlinedTextFieldDefaults.colors(
-                            focusedTextColor = TextPrimary,
-                            unfocusedTextColor = TextPrimary,
-                            focusedBorderColor = AccentCyan,
-                            unfocusedBorderColor = NavyCardBorder
-                        )
-                    )
-
-                    OutlinedTextField(
-                        value = updateVersionCode,
-                        onValueChange = { if (it.all { c -> c.isDigit() }) updateVersionCode = it },
-                        label = { Text("Version Code (Integer > 1)") },
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                        singleLine = true,
-                        modifier = Modifier.fillMaxWidth().testTag("update_version_code_input"),
-                        colors = OutlinedTextFieldDefaults.colors(
-                            focusedTextColor = TextPrimary,
-                            unfocusedTextColor = TextPrimary,
-                            focusedBorderColor = AccentCyan,
-                            unfocusedBorderColor = NavyCardBorder
-                        )
-                    )
-
-                    OutlinedTextField(
-                        value = updateDownloadUrl,
-                        onValueChange = { updateDownloadUrl = it },
-                        label = { Text("APK Download URL") },
-                        singleLine = true,
-                        modifier = Modifier.fillMaxWidth().testTag("update_download_url_input"),
-                        colors = OutlinedTextFieldDefaults.colors(
-                            focusedTextColor = TextPrimary,
-                            unfocusedTextColor = TextPrimary,
-                            focusedBorderColor = AccentCyan,
-                            unfocusedBorderColor = NavyCardBorder
-                        )
-                    )
-
-                    OutlinedTextField(
-                        value = updateReleaseNotes,
-                        onValueChange = { updateReleaseNotes = it },
-                        label = { Text("Release Notes / Changelog") },
-                        minLines = 3,
-                        maxLines = 5,
-                        modifier = Modifier.fillMaxWidth().testTag("update_release_notes_input"),
-                        colors = OutlinedTextFieldDefaults.colors(
-                            focusedTextColor = TextPrimary,
-                            unfocusedTextColor = TextPrimary,
-                            focusedBorderColor = AccentCyan,
-                            unfocusedBorderColor = NavyCardBorder
-                        )
-                    )
-
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.SpaceBetween
-                    ) {
-                        Column {
-                            Text("Force Update", fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = TextPrimary)
-                            Text("Require users to update to continue", fontSize = 11.sp, color = TextSecondary)
-                        }
-                        Switch(
-                            checked = updateIsForce,
-                            onCheckedChange = { updateIsForce = it },
-                            colors = SwitchDefaults.colors(
-                                checkedThumbColor = AccentCyan,
-                                checkedTrackColor = AccentCyan.copy(alpha = 0.4f)
-                            )
-                        )
-                    }
-                }
-            },
-            confirmButton = {
-                Button(
-                    onClick = {
-                        if (updateVersionName.isBlank() || updateDownloadUrl.isBlank()) {
-                            Toast.makeText(context, "Please provide version name and download URL", Toast.LENGTH_SHORT).show()
-                        } else {
-                            val code = updateVersionCode.toIntOrNull() ?: 2
-                            viewModel.pushAppUpdate(
-                                context = context,
-                                versionName = updateVersionName.trim(),
-                                versionCode = code,
-                                releaseNotes = updateReleaseNotes.trim(),
-                                downloadUrl = updateDownloadUrl.trim(),
-                                isForce = updateIsForce
-                            )
-                        }
-                    },
-                    colors = ButtonDefaults.buttonColors(containerColor = AccentCyan, contentColor = Color.Black),
-                    modifier = Modifier.testTag("submit_broadcast_update_button")
-                ) {
-                    Icon(Icons.Default.RocketLaunch, contentDescription = null, modifier = Modifier.size(16.dp))
-                    Spacer(modifier = Modifier.width(6.dp))
-                    Text("Broadcast Update", fontWeight = FontWeight.Bold)
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = { viewModel.closeAdminPushUpdateDialog() }) {
                     Text("Cancel", color = TextSecondary)
                 }
             },

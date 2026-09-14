@@ -80,7 +80,6 @@ class KetuCoinViewModel(
         val lastSendTransaction: CryptoTransaction? = null,
         val showTransactionHistoryModal: Boolean = false,
         val showUpdateDetailDialog: Boolean = false,
-        val showAdminPushUpdateDialog: Boolean = false,
         val isCheckingUpdate: Boolean = false
     )
 
@@ -392,14 +391,6 @@ class KetuCoinViewModel(
         _uiState.value = _uiState.value.copy(showUpdateDetailDialog = false)
     }
 
-    fun openAdminPushUpdateDialog() {
-        _uiState.value = _uiState.value.copy(showAdminPushUpdateDialog = true)
-    }
-
-    fun closeAdminPushUpdateDialog() {
-        _uiState.value = _uiState.value.copy(showAdminPushUpdateDialog = false)
-    }
-
     fun checkForUpdates(context: Context? = null) {
         _uiState.value = _uiState.value.copy(isCheckingUpdate = true)
         viewModelScope.launch {
@@ -421,38 +412,6 @@ class KetuCoinViewModel(
             }.onFailure {
                 _uiState.value = _uiState.value.copy(
                     successMessage = "KetuCoin is up to date (v1.0)"
-                )
-            }
-        }
-    }
-
-    fun pushAppUpdate(
-        context: Context,
-        versionName: String,
-        versionCode: Int,
-        releaseNotes: String,
-        downloadUrl: String,
-        isForce: Boolean
-    ) {
-        _uiState.value = _uiState.value.copy(isLoading = true)
-        viewModelScope.launch {
-            val result = repository.pushAppUpdate(
-                versionName = versionName,
-                versionCode = versionCode,
-                releaseNotes = releaseNotes,
-                downloadUrl = downloadUrl,
-                isForceUpdate = isForce
-            )
-            _uiState.value = _uiState.value.copy(isLoading = false, showAdminPushUpdateDialog = false)
-            result.onSuccess { update ->
-                // Trigger system push notification immediately
-                NotificationHelper.showUpdateNotification(context, update)
-                _uiState.value = _uiState.value.copy(
-                    successMessage = "🚀 Update ${update.versionName} pushed to all devices with push notification!"
-                )
-            }.onFailure { e ->
-                _uiState.value = _uiState.value.copy(
-                    errorMessage = e.message ?: "Failed to push update"
                 )
             }
         }
@@ -488,17 +447,6 @@ class KetuCoinViewModel(
         } catch (e: Exception) {
             _uiState.value = _uiState.value.copy(
                 errorMessage = "Unable to start download: ${e.message}"
-            )
-        }
-    }
-
-    fun toggleAdminRole() {
-        val currentRole = currentProfile.value?.role ?: "user"
-        val nextRole = if (currentRole == "admin") "user" else "admin"
-        viewModelScope.launch {
-            repository.updateUserRole(nextRole)
-            _uiState.value = _uiState.value.copy(
-                successMessage = "Switched to ${nextRole.uppercase()} mode"
             )
         }
     }

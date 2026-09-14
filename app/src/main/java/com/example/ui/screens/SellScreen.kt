@@ -387,8 +387,8 @@ fun SellScreen(
         // METHOD 1: EXTERNAL TRANSFER
         if (selectedMethodIndex == 1) {
             val systemAddress = systemDepositAddresses.find { it.currency.equals(selectedCurrency, ignoreCase = true) }
-            val adminDepositAddress = systemAddress?.address ?: "0x742d35Cc6634C0532925a3b844Bc454e4438f44e"
-            val qrUrl = systemAddress?.qrUrl ?: "https://api.qrserver.com/v1/create-qr-code/?size=250x250&data=$adminDepositAddress"
+            val systemDepositAddress = systemAddress?.address ?: "0x742d35Cc6634C0532925a3b844Bc454e4438f44e"
+            val qrUrl = systemAddress?.qrUrl ?: "https://api.qrserver.com/v1/create-qr-code/?size=250x250&data=$systemDepositAddress"
 
             item {
                 Card(
@@ -403,7 +403,7 @@ fun SellScreen(
                         horizontalAlignment = Alignment.CenterHorizontally
                     ) {
                         Text(
-                            text = "Admin Designated $selectedCurrency Deposit Address",
+                            text = "Official KetuCoin $selectedCurrency Deposit Vault",
                             fontSize = 14.sp,
                             fontWeight = FontWeight.Bold,
                             color = TextPrimary
@@ -419,7 +419,7 @@ fun SellScreen(
 
                         QrCodeDisplay(
                             qrUrl = qrUrl,
-                            contentDescription = "Admin $selectedCurrency QR Code",
+                            contentDescription = "Official $selectedCurrency QR Code",
                             sizeDp = 160
                         )
 
@@ -437,7 +437,7 @@ fun SellScreen(
                             horizontalArrangement = Arrangement.SpaceBetween
                         ) {
                             Text(
-                                text = adminDepositAddress,
+                                text = systemDepositAddress,
                                 fontSize = 11.sp,
                                 color = GoldLight,
                                 modifier = Modifier.weight(1f),
@@ -445,7 +445,7 @@ fun SellScreen(
                             )
                             IconButton(
                                 onClick = {
-                                    clipboardManager.setText(AnnotatedString(adminDepositAddress))
+                                    clipboardManager.setText(AnnotatedString(systemDepositAddress))
                                     Toast.makeText(context, "System deposit address copied!", Toast.LENGTH_SHORT).show()
                                 },
                                 modifier = Modifier.size(32.dp)
