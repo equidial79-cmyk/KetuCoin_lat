@@ -25,6 +25,8 @@ import androidx.compose.material.icons.filled.CurrencyBitcoin
 import androidx.compose.material.icons.filled.Email
 import androidx.compose.material.icons.filled.FlashOn
 import androidx.compose.material.icons.filled.Lock
+import androidx.compose.material.icons.filled.Person
+import androidx.compose.material.icons.filled.Phone
 import androidx.compose.material.icons.filled.Security
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.VisibilityOff
@@ -86,6 +88,8 @@ fun AuthScreen(
     var email by remember { mutableStateOf("") }
     var password by remember { mutableStateOf("") }
     var confirmPassword by remember { mutableStateOf("") }
+    var fullName by remember { mutableStateOf("") }
+    var phone by remember { mutableStateOf("") }
     var passwordVisible by remember { mutableStateOf(false) }
 
     val scrollState = rememberScrollState()
@@ -186,6 +190,32 @@ fun AuthScreen(
 
                     Spacer(modifier = Modifier.height(24.dp))
 
+                    // Full Name Field (on SignUp)
+                    AnimatedVisibility(visible = selectedTab == 1) {
+                        Column {
+                            OutlinedTextField(
+                                value = fullName,
+                                onValueChange = { fullName = it },
+                                label = { Text("Full Legal Name") },
+                                placeholder = { Text("e.g. Rahul Sharma", color = TextMuted) },
+                                leadingIcon = {
+                                    Icon(Icons.Default.Person, contentDescription = null, tint = AccentCyan)
+                                },
+                                singleLine = true,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .testTag("auth_name_input"),
+                                colors = OutlinedTextFieldDefaults.colors(
+                                    focusedTextColor = TextPrimary,
+                                    unfocusedTextColor = TextPrimary,
+                                    focusedBorderColor = GoldPrimary,
+                                    unfocusedBorderColor = NavyCardBorder
+                                )
+                            )
+                            Spacer(modifier = Modifier.height(16.dp))
+                        }
+                    }
+
                     // Email Field
                     OutlinedTextField(
                         value = email,
@@ -207,6 +237,33 @@ fun AuthScreen(
                             unfocusedBorderColor = NavyCardBorder
                         )
                     )
+
+                    // Phone Number Field (on SignUp)
+                    AnimatedVisibility(visible = selectedTab == 1) {
+                        Column {
+                            Spacer(modifier = Modifier.height(16.dp))
+                            OutlinedTextField(
+                                value = phone,
+                                onValueChange = { phone = it },
+                                label = { Text("Phone Number") },
+                                placeholder = { Text("+91 98765 43210", color = TextMuted) },
+                                leadingIcon = {
+                                    Icon(Icons.Default.Phone, contentDescription = null, tint = AccentCyan)
+                                },
+                                singleLine = true,
+                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Phone),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .testTag("auth_phone_input"),
+                                colors = OutlinedTextFieldDefaults.colors(
+                                    focusedTextColor = TextPrimary,
+                                    unfocusedTextColor = TextPrimary,
+                                    focusedBorderColor = GoldPrimary,
+                                    unfocusedBorderColor = NavyCardBorder
+                                )
+                            )
+                        }
+                    }
 
                     Spacer(modifier = Modifier.height(16.dp))
 
@@ -288,10 +345,10 @@ fun AuthScreen(
                                 viewModel.signIn(email, password)
                             } else {
                                 if (password == confirmPassword) {
-                                    viewModel.signUp(email, password)
+                                    viewModel.signUp(email, password, fullName, phone)
                                 } else {
-                                    // Local mismatch warning
-                                    viewModel.signUp(email, password)
+                                    // Submit with warning handled in ViewModel
+                                    viewModel.signUp(email, password, fullName, phone)
                                 }
                             }
                         },

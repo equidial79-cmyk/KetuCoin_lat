@@ -151,14 +151,14 @@ class KetuCoinViewModel(
     }
 
     // Authentication Actions
-    fun signUp(email: String, pass: String) {
+    fun signUp(email: String, pass: String, fullName: String = "", phone: String = "") {
         if (email.isBlank() || pass.isBlank()) {
             _uiState.value = _uiState.value.copy(errorMessage = "Please enter valid email and password")
             return
         }
         _uiState.value = _uiState.value.copy(isLoading = true, errorMessage = null)
         viewModelScope.launch {
-            val result = repository.signUp(email, pass)
+            val result = repository.signUp(email = email.trim(), pass = pass, fullName = fullName.trim(), phone = phone.trim())
             result.onSuccess {
                 _uiState.value = _uiState.value.copy(isLoading = false, successMessage = "Account created successfully!")
             }.onFailure { e ->

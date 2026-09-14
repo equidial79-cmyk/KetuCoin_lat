@@ -191,21 +191,29 @@ fun ProfileScreen(
 
                     Spacer(modifier = Modifier.width(14.dp))
 
+                    val profile = currentProfile
                     Column(modifier = Modifier.weight(1f)) {
                         Text(
-                            text = currentProfile?.email ?: "user@ketucoin.io",
+                            text = profile?.name ?: profile?.email ?: "User",
                             fontSize = 16.sp,
                             fontWeight = FontWeight.Bold,
                             color = TextPrimary
                         )
+                        if (profile?.name != null && profile.name != profile.email) {
+                            Text(
+                                text = profile.email ?: "",
+                                fontSize = 12.sp,
+                                color = AccentCyan
+                            )
+                        }
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Text(
-                                text = "Role: ${currentProfile?.role?.uppercase() ?: "USER"}",
+                                text = "Role: ${profile?.role?.uppercase() ?: "USER"}",
                                 fontSize = 12.sp,
                                 color = TextSecondary
                             )
                             Spacer(modifier = Modifier.width(8.dp))
-                            currentProfile?.let { KycStatusBadge(status = it.kycStatus) }
+                            profile?.let { KycStatusBadge(status = it.kycStatus) }
                         }
                     }
                 }

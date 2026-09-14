@@ -15,10 +15,28 @@ data class BankAccount(
 data class Profile(
     val id: String,
     val email: String? = null,
+    val name: String? = null,
+    val phone: String? = null,
     val role: String = "user", // 'user' or 'admin'
     @SerialName("security_pin") val securityPin: String? = null, // hashed PIN
     @SerialName("kyc_status") val kycStatus: String = "unverified", // 'pending', 'approved', 'rejected', 'unverified'
     @SerialName("bank_account") val bankAccount: BankAccount? = null
+)
+
+@Serializable
+data class SupabaseUser(
+    val id: String,
+    val name: String = "",
+    val email: String,
+    val phone: String = "",
+    @SerialName("kyc_status") val kycStatus: String = "NOT_SUBMITTED",
+    @SerialName("is_account_active") val isAccountActive: Boolean = true,
+    @SerialName("two_factor_enabled") val twoFactorEnabled: Boolean = false,
+    @SerialName("biometrics_enabled") val biometricsEnabled: Boolean = false,
+    @SerialName("member_since") val memberSince: String = "",
+    @SerialName("daily_limit_inr") val dailyLimitInr: Long = 100000L,
+    @SerialName("monthly_limit_inr") val monthlyLimitInr: Long = 1000000L,
+    @SerialName("admin_notes") val adminNotes: String = "Signed up via KetuCoin mobile app"
 )
 
 @Serializable

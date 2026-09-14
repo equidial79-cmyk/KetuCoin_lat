@@ -8,6 +8,7 @@ import com.example.data.model.CryptoTransaction
 import com.example.data.model.KycVerification
 import com.example.data.model.Profile
 import com.example.data.model.SellOrder
+import com.example.data.model.SupabaseUser
 import com.example.data.model.SupportMessage
 import com.example.data.model.SystemDepositAddress
 import com.example.data.model.Wallet
@@ -183,25 +184,77 @@ class KetuCoinRepository(
     }
 
     // Authentication & Profile Initialization
-    suspend fun signUp(email: String, pass: String): Result<Profile> = withContext(Dispatchers.IO) {
+    suspend fun signUp(
+        email: String,
+        pass: String,
+        fullName: String = "",
+        phone: String = ""
+    ): Result<Profile> = withContext(Dispatchers.IO) {
         try {
-            var userId = UUID.randomUUID().toString()
+            var userId = "usr-${(System.currentTimeMillis() % 900000) + 100000}"
+            var authUserId: String? = null
             try {
-                supabase.auth.signUpWith(Email) {
+                val authResult = supabase.auth.signUpWith(Email) {
                     this.email = email
                     this.password = pass
                 }
-                val session = supabase.auth.currentSessionOrNull()
-                session?.user?.id?.let { userId = it }
+                authResult?.id?.let {
+                    userId = it
+                    authUserId = it
+                }
+                supabase.auth.currentSessionOrNull()?.user?.id?.let {
+                    userId = it
+                    authUserId = it
+                }
             } catch (e: Exception) {
-                Log.w(TAG, "Supabase Auth signup remote call note: ${e.message}. Initializing state.")
+                Log.w(TAG, "Supabase Auth signup call note: ${e.message}")
             }
 
-            // Create initial profile row - no fake bank accounts or fake balances
+            val displayName = if (fullName.isNotBlank()) {
+                fullName.trim()
+            } else {
+                email.substringBefore("@")
+                    .replace(".", " ")
+                    .replace("_", " ")
+                    .split(" ")
+                    .filter { it.isNotBlank() }
+                    .joinToString(" ") { word -> word.replaceFirstChar { it.uppercase() } }
+                    .ifBlank { "User" }
+            }
+
+            val userPhone = if (phone.isNotBlank()) phone.trim() else "+91 98000 00000"
+            val today = SimpleDateFormat("yyyy-MM-dd", Locale.US).format(Date())
+
+            val supabaseUser = SupabaseUser(
+                id = userId,
+                name = displayName,
+                email = email,
+                phone = userPhone,
+                kycStatus = "NOT_SUBMITTED",
+                isAccountActive = true,
+                twoFactorEnabled = false,
+                biometricsEnabled = false,
+                memberSince = today,
+                dailyLimitInr = 100000L,
+                monthlyLimitInr = 1000000L,
+                adminNotes = "Signed up via KetuCoin mobile app"
+            )
+
+            // CRITICAL: Insert directly into the Supabase 'users' table which powers the Admin Console!
+            try {
+                supabase.from("users").insert(supabaseUser)
+                Log.d(TAG, "Successfully inserted user into 'users' table for Admin Console: $userId ($email)")
+            } catch (e: Exception) {
+                Log.e(TAG, "Insert into Supabase 'users' table note: ${e.message}")
+            }
+
+            // Create initial profile row
             val defaultPinHash = HashUtil.hashPin("1234") // Default test PIN 1234
             val newProfile = Profile(
                 id = userId,
                 email = email,
+                name = displayName,
+                phone = userPhone,
                 role = "user",
                 securityPin = defaultPinHash,
                 kycStatus = "unverified",
@@ -211,14 +264,18 @@ class KetuCoinRepository(
             // Real initial wallets with ZERO balance
             val initialWallets = createRealWallets(userId)
 
-            // Attempt Supabase Postgrest remote insert
+            // Attempt Supabase Postgrest remote insert for profiles and wallets
             try {
                 supabase.from("profiles").insert(newProfile)
+            } catch (e: Exception) {
+                Log.w(TAG, "Postgrest insert profile note: ${e.message}")
+            }
+            try {
                 initialWallets.forEach { wallet ->
                     supabase.from("wallets").insert(wallet)
                 }
             } catch (e: Exception) {
-                Log.w(TAG, "Postgrest insert profile/wallets: ${e.message}")
+                Log.w(TAG, "Postgrest insert wallets note: ${e.message}")
             }
 
             _currentProfile.value = newProfile
@@ -248,7 +305,7 @@ class KetuCoinRepository(
 
     suspend fun signIn(email: String, pass: String): Result<Profile> = withContext(Dispatchers.IO) {
         try {
-            var userId = UUID.randomUUID().toString()
+            var userId = "usr-${(System.currentTimeMillis() % 900000) + 100000}"
             try {
                 supabase.auth.signInWith(Email) {
                     this.email = email
@@ -259,6 +316,18 @@ class KetuCoinRepository(
                 Log.w(TAG, "Supabase Auth signin remote note: ${e.message}. Using profile state.")
             }
 
+            // Look up in 'users' table (Admin Console table)
+            var loadedSupabaseUser: SupabaseUser? = null
+            try {
+                loadedSupabaseUser = supabase.from("users").select {
+                    filter {
+                        eq("email", email)
+                    }
+                }.decodeSingleOrNull<SupabaseUser>()
+            } catch (e: Exception) {
+                Log.w(TAG, "Supabase 'users' table fetch note: ${e.message}")
+            }
+
             var loadedProfile: Profile? = null
             try {
                 loadedProfile = supabase.from("profiles").select {
@@ -267,17 +336,52 @@ class KetuCoinRepository(
                     }
                 }.decodeSingleOrNull<Profile>()
             } catch (e: Exception) {
-                Log.w(TAG, "Postgrest fetch profile: ${e.message}")
+                Log.w(TAG, "Postgrest fetch profile note: ${e.message}")
             }
 
-            val profile = loadedProfile ?: Profile(
-                id = userId,
+            val finalId = loadedSupabaseUser?.id ?: loadedProfile?.id ?: userId
+            val finalKyc = when (loadedSupabaseUser?.kycStatus?.uppercase()) {
+                "APPROVED" -> "approved"
+                "PENDING" -> "pending"
+                "REJECTED" -> "rejected"
+                else -> loadedProfile?.kycStatus ?: "unverified"
+            }
+
+            val profile = loadedProfile?.copy(
+                id = finalId,
+                name = loadedSupabaseUser?.name ?: loadedProfile.name,
+                phone = loadedSupabaseUser?.phone ?: loadedProfile.phone,
+                kycStatus = finalKyc
+            ) ?: Profile(
+                id = finalId,
                 email = email,
+                name = loadedSupabaseUser?.name ?: email.substringBefore("@"),
+                phone = loadedSupabaseUser?.phone,
                 role = "user",
                 securityPin = HashUtil.hashPin("1234"),
-                kycStatus = "unverified",
-                bankAccount = null // Real profile has null bank until user links one
+                kycStatus = finalKyc,
+                bankAccount = null
             )
+
+            // If user did not exist in 'users' table, make sure they are registered so Admin Console sees them!
+            if (loadedSupabaseUser == null) {
+                try {
+                    val today = SimpleDateFormat("yyyy-MM-dd", Locale.US).format(Date())
+                    val sUser = SupabaseUser(
+                        id = finalId,
+                        name = profile.name ?: email.substringBefore("@"),
+                        email = email,
+                        phone = profile.phone ?: "+91 98000 00000",
+                        kycStatus = if (profile.kycStatus == "approved") "APPROVED" else "NOT_SUBMITTED",
+                        isAccountActive = true,
+                        memberSince = today,
+                        adminNotes = "Active user logged in"
+                    )
+                    supabase.from("users").insert(sUser)
+                } catch (e: Exception) {
+                    Log.w(TAG, "Insert user to 'users' table on signIn note: ${e.message}")
+                }
+            }
 
             // Load real wallets from Supabase
             var loadedWallets: List<Wallet> = emptyList()
@@ -782,7 +886,20 @@ class KetuCoinRepository(
             Log.w(TAG, "KYC sync remote: ${e.message}")
         }
 
-        _currentProfile.value = _currentProfile.value?.copy(kycStatus = finalStatus)
+        // Sync KYC status & name to Supabase 'users' table for Admin Console
+        try {
+            supabase.from("users").update({
+                set("kyc_status", if (finalStatus == "approved") "APPROVED" else "PENDING")
+                set("name", fullName)
+                set("admin_notes", "Submitted $documentType for verification")
+            }) {
+                filter { eq("email", profile.email ?: "") }
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "users table KYC sync note: ${e.message}")
+        }
+
+        _currentProfile.value = _currentProfile.value?.copy(kycStatus = finalStatus, name = fullName)
         Result.success(verification)
     }
 
@@ -796,6 +913,16 @@ class KetuCoinRepository(
             }
         } catch (e: Exception) {
             Log.w(TAG, "Approve KYC remote: ${e.message}")
+        }
+        try {
+            supabase.from("users").update({
+                set("kyc_status", "APPROVED")
+                set("admin_notes", "KYC Approved")
+            }) {
+                filter { eq("email", profile.email ?: "") }
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "users table approve KYC note: ${e.message}")
         }
         _currentProfile.value = _currentProfile.value?.copy(kycStatus = "approved")
         Result.success(true)
@@ -811,6 +938,16 @@ class KetuCoinRepository(
             }
         } catch (e: Exception) {
             Log.w(TAG, "Reset KYC remote: ${e.message}")
+        }
+        try {
+            supabase.from("users").update({
+                set("kyc_status", "NOT_SUBMITTED")
+                set("admin_notes", "KYC Reset")
+            }) {
+                filter { eq("email", profile.email ?: "") }
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "users table reset KYC note: ${e.message}")
         }
         _currentProfile.value = _currentProfile.value?.copy(kycStatus = "unverified")
         Result.success(true)
