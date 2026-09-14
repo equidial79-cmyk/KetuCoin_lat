@@ -5,6 +5,7 @@ import com.example.data.model.AppUpdateInfo
 import com.example.data.model.BankAccount
 import com.example.data.model.CryptoMarketItem
 import com.example.data.model.CryptoTransaction
+import com.example.data.model.KycSubmission
 import com.example.data.model.KycVerification
 import com.example.data.model.Profile
 import com.example.data.model.SellOrder
@@ -19,12 +20,15 @@ import io.github.jan.supabase.auth.auth
 import io.github.jan.supabase.auth.providers.builtin.Email
 import io.github.jan.supabase.postgrest.from
 import io.github.jan.supabase.postgrest.postgrest
+import io.github.jan.supabase.realtime.PostgresAction
 import io.github.jan.supabase.realtime.Realtime
 import io.github.jan.supabase.realtime.channel
+import io.github.jan.supabase.realtime.postgresChangeFlow
 import io.github.jan.supabase.realtime.realtime
 import io.github.jan.supabase.storage.storage
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -32,6 +36,11 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.booleanOrNull
+import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.longOrNull
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -72,7 +81,15 @@ class KetuCoinRepository(
     private val _latestAppUpdate = MutableStateFlow<AppUpdateInfo?>(null)
     val latestAppUpdate = _latestAppUpdate.asStateFlow()
 
+    private val _kycSubmissions = MutableStateFlow<List<KycSubmission>>(emptyList())
+    val kycSubmissions = _kycSubmissions.asStateFlow()
+
+    private val _latestKycSubmission = MutableStateFlow<KycSubmission?>(null)
+    val latestKycSubmission = _latestKycSubmission.asStateFlow()
+
     private var onNewUpdateListener: ((AppUpdateInfo) -> Unit)? = null
+    private var realtimeSyncJob: Job? = null
+    private var realtimeChannelJob: Job? = null
 
     fun setOnNewUpdateListener(listener: (AppUpdateInfo) -> Unit) {
         onNewUpdateListener = listener
@@ -282,19 +299,12 @@ class KetuCoinRepository(
             _wallets.value = initialWallets
             _isUserLoggedIn.value = true
 
-            // Set up welcome support message
-            val welcomeMsg = SupportMessage(
-                id = UUID.randomUUID().toString(),
-                userId = userId,
-                senderRole = "admin",
-                message = "Welcome to KetuCoin! Your crypto to INR exchange desk. Link your bank in Profile to receive real INR payouts.",
-                createdAt = getCurrentIsoTime()
-            )
-            _supportMessages.value = listOf(welcomeMsg)
+            // Fetch any existing messages or initialize welcome
+            fetchSupportMessages(userId)
             _transactions.value = emptyList() // Real users start with empty real transaction history
 
-            // Setup Realtime subscription
-            setupRealtimeSubscriptions(userId)
+            // Start continuous bidirectional Realtime Sync with Admin Console
+            startRealtimeSync(userId)
 
             Result.success(newProfile)
         } catch (e: Exception) {
@@ -412,18 +422,9 @@ class KetuCoinRepository(
             _wallets.value = wallets
             _isUserLoggedIn.value = true
 
-            // Set welcome message if empty
-            if (_supportMessages.value.isEmpty()) {
-                _supportMessages.value = listOf(
-                    SupportMessage(
-                        id = UUID.randomUUID().toString(),
-                        userId = profile.id,
-                        senderRole = "admin",
-                        message = "Welcome back to KetuCoin! 24/7 INR settlements are active.",
-                        createdAt = getCurrentIsoTime()
-                    )
-                )
-            }
+            // Load real support messages and sell orders from Supabase
+            fetchSupportMessages(profile.id)
+            fetchSellOrders(profile.id)
 
             // Load real transactions from Supabase
             var loadedTransactions: List<CryptoTransaction> = emptyList()
@@ -439,7 +440,8 @@ class KetuCoinRepository(
 
             _transactions.value = loadedTransactions // Only real transactions from DB
 
-            setupRealtimeSubscriptions(profile.id)
+            // Start continuous bidirectional Realtime Sync with Admin Console
+            startRealtimeSync(profile.id)
 
             Result.success(profile)
         } catch (e: Exception) {
@@ -451,15 +453,46 @@ class KetuCoinRepository(
     suspend fun refreshUserData(): Result<Boolean> = withContext(Dispatchers.IO) {
         val profile = _currentProfile.value ?: return@withContext Result.failure(Exception("Not logged in"))
         try {
-            // Fetch updated profile
+            // 1. Fetch updated status from Supabase 'users' table (Admin Console table)
+            try {
+                val sUsers = supabase.from("users").select {
+                    filter {
+                        or {
+                            eq("id", profile.id)
+                            if (!profile.email.isNullOrBlank()) eq("email", profile.email) else eq("id", profile.id)
+                        }
+                    }
+                }.decodeList<SupabaseUser>()
+                if (sUsers.isNotEmpty()) {
+                    val sUser = sUsers.first()
+                    val remoteKyc = when (sUser.kycStatus.uppercase()) {
+                        "APPROVED" -> "approved"
+                        "PENDING" -> "pending"
+                        "REJECTED" -> "rejected"
+                        else -> "unverified"
+                    }
+                    _currentProfile.value = _currentProfile.value?.copy(
+                        kycStatus = remoteKyc,
+                        name = if (sUser.name.isNotBlank()) sUser.name else _currentProfile.value?.name ?: "",
+                        phone = if (sUser.phone.isNotBlank()) sUser.phone else _currentProfile.value?.phone
+                    )
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "Refresh user from 'users' table: ${e.message}")
+            }
+
+            // 2. Fetch updated profile from 'profiles'
             val freshProfile = supabase.from("profiles").select {
                 filter { eq("id", profile.id) }
             }.decodeSingleOrNull<Profile>()
             if (freshProfile != null) {
-                _currentProfile.value = freshProfile
+                _currentProfile.value = _currentProfile.value?.copy(
+                    bankAccount = freshProfile.bankAccount,
+                    securityPin = freshProfile.securityPin
+                )
             }
 
-            // Fetch updated wallets
+            // 3. Fetch updated wallets
             val freshWallets = supabase.from("wallets").select {
                 filter { eq("user_id", profile.id) }
             }.decodeList<Wallet>()
@@ -467,7 +500,13 @@ class KetuCoinRepository(
                 _wallets.value = freshWallets
             }
 
-            // Fetch updated transactions
+            // 4. Fetch updated support messages
+            fetchSupportMessages(profile.id)
+
+            // 5. Fetch updated sell orders
+            fetchSellOrders(profile.id)
+
+            // 6. Fetch updated transactions
             val freshTransactions = supabase.from("transactions").select {
                 filter { eq("user_id", profile.id) }
             }.decodeList<CryptoTransaction>()
@@ -477,6 +516,19 @@ class KetuCoinRepository(
         } catch (e: Exception) {
             Log.w(TAG, "Refresh user data error: ${e.message}")
             Result.failure(e)
+        }
+    }
+
+    suspend fun refreshWallets(userId: String) = withContext(Dispatchers.IO) {
+        try {
+            val freshWallets = supabase.from("wallets").select {
+                filter { eq("user_id", userId) }
+            }.decodeList<Wallet>()
+            if (freshWallets.isNotEmpty()) {
+                _wallets.value = freshWallets
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "refreshWallets error: ${e.message}")
         }
     }
 
@@ -505,6 +557,8 @@ class KetuCoinRepository(
     }
 
     fun signOut() {
+        realtimeSyncJob?.cancel()
+        realtimeSyncJob = null
         scope.launch {
             try {
                 supabase.auth.signOut()
@@ -558,21 +612,403 @@ class KetuCoinRepository(
         )
     }
 
-    private fun setupRealtimeSubscriptions(userId: String) {
-        scope.launch {
+    private fun handleIncomingMessageAction(action: PostgresAction, sourceTable: String) {
+        try {
+            when (action) {
+                is PostgresAction.Insert, is PostgresAction.Update -> {
+                    val record = if (action is PostgresAction.Insert) action.record else (action as PostgresAction.Update).record
+                    val msgUserId = record["user_id"]?.jsonPrimitive?.contentOrNull
+                    val currentProf = _currentProfile.value
+                    val currentUid = currentProf?.id ?: ""
+                    val currentEmail = currentProf?.email ?: ""
+
+                    val isForCurrentUser = msgUserId.isNullOrBlank() || msgUserId == currentUid ||
+                            (currentEmail.isNotBlank() && record["user_email"]?.jsonPrimitive?.contentOrNull.equals(currentEmail, ignoreCase = true))
+
+                    if (isForCurrentUser) {
+                        val id = record["id"]?.jsonPrimitive?.contentOrNull ?: "msg-${System.currentTimeMillis()}-${(100..999).random()}"
+                        val sender = record["sender"]?.jsonPrimitive?.contentOrNull
+                            ?: record["sender_role"]?.jsonPrimitive?.contentOrNull
+                            ?: "admin"
+                        val senderName = record["sender_name"]?.jsonPrimitive?.contentOrNull
+                            ?: if (sender == "user") (currentProf?.name ?: "You") else "KetuCoin Desk"
+                        val text = record["text"]?.jsonPrimitive?.contentOrNull
+                            ?: record["message"]?.jsonPrimitive?.contentOrNull
+                            ?: record["content"]?.jsonPrimitive?.contentOrNull
+                            ?: ""
+                        val timestamp = record["timestamp"]?.jsonPrimitive?.longOrNull
+                            ?: System.currentTimeMillis()
+                        val isRead = record["is_read"]?.jsonPrimitive?.booleanOrNull ?: false
+
+                        if (text.isNotBlank()) {
+                            val incoming = SupportMessage(
+                                id = id,
+                                userId = msgUserId ?: currentUid,
+                                sender = sender,
+                                senderName = senderName,
+                                text = text,
+                                timestamp = timestamp,
+                                isRead = isRead
+                            )
+
+                            val existing = _supportMessages.value.filter { it.id != id }
+                            _supportMessages.value = (existing + incoming).sortedBy { it.timestamp }
+                            Log.d(TAG, "Realtime: Instant UI message update from table '$sourceTable': ${incoming.text}")
+                        }
+                    }
+                }
+                else -> {}
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error handling realtime message event: ${e.message}", e)
+        }
+    }
+
+    private fun handleIncomingKycAction(action: PostgresAction, sourceTable: String) {
+        try {
+            when (action) {
+                is PostgresAction.Insert, is PostgresAction.Update -> {
+                    val record = if (action is PostgresAction.Insert) action.record else (action as PostgresAction.Update).record
+                    val subUserId = record["user_id"]?.jsonPrimitive?.contentOrNull
+                    val subUserEmail = record["user_email"]?.jsonPrimitive?.contentOrNull ?: record["email"]?.jsonPrimitive?.contentOrNull
+                    val currentProf = _currentProfile.value
+                    val currentUid = currentProf?.id ?: ""
+                    val currentEmail = currentProf?.email ?: ""
+
+                    val isTargetUser = (subUserId != null && subUserId == currentUid) ||
+                            (subUserEmail != null && currentEmail.isNotBlank() && subUserEmail.equals(currentEmail, ignoreCase = true)) ||
+                            (currentProf != null && subUserId == null)
+
+                    if (isTargetUser) {
+                        val rawStatus = record["status"]?.jsonPrimitive?.contentOrNull
+                            ?: record["kyc_status"]?.jsonPrimitive?.contentOrNull
+                            ?: "pending"
+                        val normalizedStatus = when (rawStatus.uppercase()) {
+                            "APPROVED", "VERIFIED" -> "approved"
+                            "REJECTED", "DECLINED" -> "rejected"
+                            "PENDING", "UNDER_REVIEW", "SUBMITTED" -> "pending"
+                            else -> "pending"
+                        }
+                        val fullName = record["full_name"]?.jsonPrimitive?.contentOrNull
+                            ?: record["name"]?.jsonPrimitive?.contentOrNull
+                            ?: currentProf?.name ?: ""
+                        val docType = record["document_type"]?.jsonPrimitive?.contentOrNull ?: "Aadhaar Card"
+                        val docNum = record["document_number"]?.jsonPrimitive?.contentOrNull
+                        val frontUrl = record["id_front_url"]?.jsonPrimitive?.contentOrNull
+                        val backUrl = record["id_back_url"]?.jsonPrimitive?.contentOrNull
+                        val adminNotes = record["admin_notes"]?.jsonPrimitive?.contentOrNull
+                        val id = record["id"]?.jsonPrimitive?.contentOrNull ?: "kyc-${System.currentTimeMillis()}"
+                        val createdAt = record["created_at"]?.jsonPrimitive?.contentOrNull
+                            ?: record["submitted_at"]?.jsonPrimitive?.contentOrNull
+
+                        val submission = KycSubmission(
+                            id = id,
+                            userId = subUserId ?: currentUid,
+                            userEmail = subUserEmail ?: currentEmail,
+                            fullName = fullName,
+                            documentType = docType,
+                            documentNumber = docNum,
+                            idFrontUrl = frontUrl,
+                            idBackUrl = backUrl,
+                            status = normalizedStatus,
+                            adminNotes = adminNotes,
+                            createdAt = createdAt
+                        )
+
+                        val filteredList = _kycSubmissions.value.filter { it.id != id }
+                        _kycSubmissions.value = listOf(submission) + filteredList
+                        _latestKycSubmission.value = submission
+
+                        if (currentProf != null) {
+                            _currentProfile.value = currentProf.copy(
+                                kycStatus = normalizedStatus,
+                                name = if (fullName.isNotBlank()) fullName else currentProf.name
+                            )
+                        }
+                        Log.d(TAG, "Realtime: Instant UI KYC status update from table '$sourceTable': $normalizedStatus")
+
+                        if (normalizedStatus == "approved") {
+                            scope.launch {
+                                refreshWallets(currentUid)
+                            }
+                        }
+                    }
+                }
+                else -> {}
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error handling realtime KYC event: ${e.message}", e)
+        }
+    }
+
+    private fun handleIncomingUserAction(action: PostgresAction) {
+        try {
+            when (action) {
+                is PostgresAction.Insert, is PostgresAction.Update -> {
+                    val record = if (action is PostgresAction.Insert) action.record else (action as PostgresAction.Update).record
+                    val recordId = record["id"]?.jsonPrimitive?.contentOrNull
+                    val recordEmail = record["email"]?.jsonPrimitive?.contentOrNull
+                    val currentProf = _currentProfile.value
+                    val currentUid = currentProf?.id ?: ""
+                    val currentEmail = currentProf?.email ?: ""
+
+                    if (recordId == currentUid || (currentEmail.isNotBlank() && recordEmail.equals(currentEmail, ignoreCase = true))) {
+                        val rawKyc = record["kyc_status"]?.jsonPrimitive?.contentOrNull ?: ""
+                        val name = record["name"]?.jsonPrimitive?.contentOrNull
+                        val normalized = when (rawKyc.uppercase()) {
+                            "APPROVED", "VERIFIED" -> "approved"
+                            "REJECTED", "DECLINED" -> "rejected"
+                            "PENDING", "UNDER_REVIEW" -> "pending"
+                            else -> currentProf?.kycStatus ?: "unverified"
+                        }
+
+                        if (currentProf != null && (currentProf.kycStatus != normalized || (!name.isNullOrBlank() && currentProf.name != name))) {
+                            _currentProfile.value = currentProf.copy(
+                                kycStatus = normalized,
+                                name = if (!name.isNullOrBlank()) name else currentProf.name
+                            )
+                            Log.d(TAG, "Realtime: Instant UI users KYC update: $normalized")
+                            if (normalized == "approved") {
+                                scope.launch {
+                                    refreshWallets(currentUid)
+                                }
+                            }
+                        }
+                    }
+                }
+                else -> {}
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error handling realtime users event: ${e.message}", e)
+        }
+    }
+
+    private fun handleIncomingOrderAction(action: PostgresAction) {
+        try {
+            when (action) {
+                is PostgresAction.Insert, is PostgresAction.Update -> {
+                    val record = if (action is PostgresAction.Insert) action.record else (action as PostgresAction.Update).record
+                    val orderUserId = record["user_id"]?.jsonPrimitive?.contentOrNull
+                    val currentUid = _currentProfile.value?.id ?: ""
+                    if (orderUserId == currentUid) {
+                        val orderId = record["order_id"]?.jsonPrimitive?.contentOrNull ?: ""
+                        val status = record["status"]?.jsonPrimitive?.contentOrNull ?: "PENDING_VERIFICATION"
+                        val bankUtr = record["bank_utr"]?.jsonPrimitive?.contentOrNull
+
+                        val existing = _sellOrders.value.find { it.orderId == orderId }
+                        if (existing != null) {
+                            val updated = existing.copy(status = status, bankUtr = bankUtr ?: existing.bankUtr)
+                            _sellOrders.value = _sellOrders.value.map { if (it.orderId == orderId) updated else it }
+                            Log.d(TAG, "Realtime: Instant UI order update: $orderId -> $status")
+                        }
+                    }
+                }
+                else -> {}
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error handling realtime order event: ${e.message}", e)
+        }
+    }
+
+    private suspend fun setupRealtimeSubscriptions(userId: String) {
+        try {
+            val realtime = supabase.realtime
+
+            // 1. Subscribe to 'messages' table (and 'support_messages')
+            val messagesChannel = realtime.channel("public:messages_realtime")
+            val messagesFlow = messagesChannel.postgresChangeFlow<PostgresAction>(schema = "public") {
+                table = "messages"
+            }
+            val supportMessagesFlow = messagesChannel.postgresChangeFlow<PostgresAction>(schema = "public") {
+                table = "support_messages"
+            }
+
+            // 2. Subscribe to 'kyc_submissions' table (and 'kyc_verifications', 'users')
+            val kycChannel = realtime.channel("public:kyc_realtime")
+            val kycSubmissionsFlow = kycChannel.postgresChangeFlow<PostgresAction>(schema = "public") {
+                table = "kyc_submissions"
+            }
+            val kycVerificationsFlow = kycChannel.postgresChangeFlow<PostgresAction>(schema = "public") {
+                table = "kyc_verifications"
+            }
+            val usersFlow = kycChannel.postgresChangeFlow<PostgresAction>(schema = "public") {
+                table = "users"
+            }
+
+            // 3. Subscribe to 'sell_orders'
+            val ordersChannel = realtime.channel("public:orders_realtime")
+            val ordersFlow = ordersChannel.postgresChangeFlow<PostgresAction>(schema = "public") {
+                table = "sell_orders"
+            }
+
+            messagesChannel.subscribe()
+            kycChannel.subscribe()
+            ordersChannel.subscribe()
+            Log.d(TAG, "Supabase Realtime channels active for 'messages' and 'kyc_submissions' tables.")
+
+            // Launch individual collectors for immediate UI reaction:
+            scope.launch {
+                messagesFlow.collect { action ->
+                    handleIncomingMessageAction(action, "messages")
+                }
+            }
+
+            scope.launch {
+                supportMessagesFlow.collect { action ->
+                    handleIncomingMessageAction(action, "support_messages")
+                }
+            }
+
+            scope.launch {
+                kycSubmissionsFlow.collect { action ->
+                    handleIncomingKycAction(action, "kyc_submissions")
+                }
+            }
+
+            scope.launch {
+                kycVerificationsFlow.collect { action ->
+                    handleIncomingKycAction(action, "kyc_verifications")
+                }
+            }
+
+            scope.launch {
+                usersFlow.collect { action ->
+                    handleIncomingUserAction(action)
+                }
+            }
+
+            scope.launch {
+                ordersFlow.collect { action ->
+                    handleIncomingOrderAction(action)
+                }
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Realtime channel subscription note: ${e.message}")
+        }
+    }
+
+    suspend fun fetchKycSubmissions(userId: String) = withContext(Dispatchers.IO) {
+        try {
+            val subs = supabase.from("kyc_submissions").select {
+                filter {
+                    eq("user_id", userId)
+                }
+            }.decodeList<KycSubmission>()
+
+            if (subs.isNotEmpty()) {
+                _kycSubmissions.value = subs
+                _latestKycSubmission.value = subs.firstOrNull()
+            }
+        } catch (e: Exception) {
             try {
-                // Subscribe to realtime changes on wallets and support_messages
-                val walletChannel = supabase.realtime.channel("public:wallets:$userId")
-                walletChannel.subscribe()
+                val vers = supabase.from("kyc_verifications").select {
+                    filter {
+                        eq("user_id", userId)
+                    }
+                }.decodeList<KycVerification>()
+                if (vers.isNotEmpty()) {
+                    val converted = vers.map { v ->
+                        KycSubmission(
+                            id = v.id,
+                            userId = v.userId,
+                            fullName = v.fullName,
+                            documentType = v.documentType,
+                            idFrontUrl = v.idFrontUrl,
+                            status = v.status
+                        )
+                    }
+                    _kycSubmissions.value = converted
+                    _latestKycSubmission.value = converted.firstOrNull()
+                }
+            } catch (e2: Exception) {
+                // Ignore
+            }
+        }
+    }
 
-                val chatChannel = supabase.realtime.channel("public:support_messages:$userId")
-                chatChannel.subscribe()
+    fun startRealtimeSync(userId: String) {
+        realtimeSyncJob?.cancel()
+        realtimeChannelJob?.cancel()
 
-                val updateChannel = supabase.realtime.channel("public:app_updates")
-                updateChannel.subscribe()
-                Log.d(TAG, "Realtime channels subscribed for user: $userId")
-            } catch (e: Exception) {
-                Log.w(TAG, "Supabase realtime-kt subscription note: ${e.message}")
+        // Dedicated Supabase Realtime WebSocket listener for immediate UI updates
+        realtimeChannelJob = scope.launch(Dispatchers.IO) {
+            setupRealtimeSubscriptions(userId)
+        }
+
+        // Resilient continuous background sync (every 4 seconds)
+        realtimeSyncJob = scope.launch(Dispatchers.IO) {
+            // Fetch initial KYC submissions
+            fetchKycSubmissions(userId)
+
+            while (isActive) {
+                try {
+                    val currentProf = _currentProfile.value
+                    val userEmail = currentProf?.email ?: ""
+
+                    // 1. Sync User Profile & KYC status from 'users' table
+                    val usersList = supabase.from("users").select {
+                        filter {
+                            or {
+                                eq("id", userId)
+                                if (userEmail.isNotBlank()) eq("email", userEmail) else eq("id", userId)
+                            }
+                        }
+                    }.decodeList<SupabaseUser>()
+
+                    if (usersList.isNotEmpty()) {
+                        val sUser = usersList.first()
+                        val remoteKyc = when (sUser.kycStatus.uppercase()) {
+                            "APPROVED" -> "approved"
+                            "PENDING" -> "pending"
+                            "REJECTED" -> "rejected"
+                            else -> "unverified"
+                        }
+                        if (currentProf != null && (currentProf.kycStatus != remoteKyc || (sUser.name.isNotBlank() && currentProf.name != sUser.name))) {
+                            _currentProfile.value = currentProf.copy(
+                                kycStatus = remoteKyc,
+                                name = if (sUser.name.isNotBlank()) sUser.name else currentProf.name
+                            )
+                            Log.d(TAG, "Sync: Updated KYC status to $remoteKyc for user $userId")
+                        }
+                    }
+
+                    // 2. Sync Support Messages (fetches real-time replies from Admin Console)
+                    val msgs = supabase.from("support_messages").select {
+                        filter {
+                            eq("user_id", userId)
+                        }
+                    }.decodeList<SupportMessage>().sortedBy { it.timestamp }
+
+                    if (msgs.isNotEmpty() && msgs != _supportMessages.value) {
+                        _supportMessages.value = msgs
+                    }
+
+                    // 3. Sync Sell Orders (detects admin approvals, completions, UTR entries)
+                    val orders = supabase.from("sell_orders").select {
+                        filter {
+                            eq("user_id", userId)
+                        }
+                    }.decodeList<SellOrder>().sortedByDescending { it.createdAt }
+
+                    if (orders.isNotEmpty() && orders != _sellOrders.value) {
+                        _sellOrders.value = orders
+                    }
+
+                    // 4. Sync Wallets (balances credited by admin)
+                    val wList = supabase.from("wallets").select {
+                        filter {
+                            eq("user_id", userId)
+                        }
+                    }.decodeList<Wallet>()
+
+                    if (wList.isNotEmpty() && wList != _wallets.value) {
+                        _wallets.value = wList
+                    }
+                } catch (e: Exception) {
+                    // Suppress network poll glitches
+                }
+
+                delay(4000)
             }
         }
     }
@@ -724,26 +1160,54 @@ class KetuCoinRepository(
             Log.w(TAG, "Wallet deduction sync: ${e.message}")
         }
 
-        // Create Sell Order record
+        // Create Sell Order record matching Supabase 'sell_orders' table
+        val orderId = "ORD-${SimpleDateFormat("yyyy", Locale.US).format(Date())}-${(1000..9999).random()}"
+        val payoutDesc = profile.bankAccount?.let { "${it.bankName} - A/C ${it.accountNumber} (IFSC: ${it.ifscCode})" } ?: "Bank Transfer"
+        val pType = "IMPS"
+
         val order = SellOrder(
-            id = UUID.randomUUID().toString(),
+            orderId = orderId,
             userId = profile.id,
-            currency = currency,
-            amount = amount,
-            method = "wallet",
-            paymentProofUrl = null,
-            status = "completed",
-            createdAt = getCurrentIsoTime(),
-            inrPayoutEstimate = inrPayout
+            userEmail = profile.email,
+            cryptoSymbol = currency.uppercase(),
+            cryptoAmount = amount,
+            exchangeRateInr = rate,
+            inrPayoutAmount = inrPayout,
+            sellType = "FROM_WALLET",
+            txHash = "0x" + UUID.randomUUID().toString().replace("-", ""),
+            transferProofName = null,
+            adminReceivingAddress = null,
+            network = "Direct Wallet Settlement",
+            payoutAccount = payoutDesc,
+            payoutType = pType,
+            status = "PENDING_VERIFICATION",
+            createdAt = System.currentTimeMillis()
         )
 
         try {
             supabase.from("sell_orders").insert(order)
+            Log.d(TAG, "Successfully inserted sell order to Supabase: $orderId")
         } catch (e: Exception) {
-            Log.w(TAG, "Sell order sync: ${e.message}")
+            Log.e(TAG, "Sell order sync failed: ${e.message}", e)
         }
 
         _sellOrders.value = listOf(order) + _sellOrders.value
+
+        // Also post an alert to 'support_messages' so Admin Console sees new sell order in support chat
+        val orderAlert = SupportMessage(
+            id = "msg-${System.currentTimeMillis()}-${(100..999).random()}",
+            userId = profile.id,
+            sender = "user",
+            senderName = profile.name ?: "User",
+            text = "Sell Order Placed #$orderId: $amount ${currency.uppercase()} for ₹${inrPayout.toLong()} payout to $payoutDesc ($pType).",
+            timestamp = System.currentTimeMillis(),
+            isRead = false
+        )
+        try {
+            supabase.from("support_messages").insert(orderAlert)
+        } catch (e: Exception) {
+            Log.w(TAG, "Order alert chat note: ${e.message}")
+        }
 
         // Record in transactions history
         val sellTx = CryptoTransaction(
@@ -797,25 +1261,60 @@ class KetuCoinRepository(
         val rate = _marketRates.value.find { it.currency.equals(currency, ignoreCase = true) }?.currentPriceInr ?: 90.0
         val inrPayout = amount * rate
 
+        val orderId = "ORD-${SimpleDateFormat("yyyy", Locale.US).format(Date())}-${(1000..9999).random()}"
+        val payoutDesc = profile.bankAccount?.let { "${it.bankName} - A/C ${it.accountNumber} (IFSC: ${it.ifscCode})" } ?: "Bank Transfer"
+        val pType = "IMPS"
+        val vaultAddr = _wallets.value.find { it.currency.equals(currency, ignoreCase = true) }?.assignedDepositAddress ?: "KetuCoin Vault Address"
+
         val order = SellOrder(
-            id = UUID.randomUUID().toString(),
+            orderId = orderId,
             userId = profile.id,
-            currency = currency,
-            amount = amount,
-            method = "external",
-            paymentProofUrl = proofUrl,
-            status = "pending",
-            createdAt = getCurrentIsoTime(),
-            inrPayoutEstimate = inrPayout
+            userEmail = profile.email,
+            cryptoSymbol = currency.uppercase(),
+            cryptoAmount = amount,
+            exchangeRateInr = rate,
+            inrPayoutAmount = inrPayout,
+            sellType = "EXTERNAL_TRANSFER",
+            txHash = "0x" + UUID.randomUUID().toString().replace("-", ""),
+            transferProofName = fileName,
+            adminReceivingAddress = vaultAddr,
+            network = when (currency.uppercase()) {
+                "USDT" -> "TRC20"
+                "BTC" -> "Bitcoin Native"
+                "ETH" -> "ERC20"
+                "SOL" -> "Solana Native"
+                else -> "Mainnet"
+            },
+            payoutAccount = payoutDesc,
+            payoutType = pType,
+            status = "PENDING_VERIFICATION",
+            createdAt = System.currentTimeMillis()
         )
 
         try {
             supabase.from("sell_orders").insert(order)
+            Log.d(TAG, "Successfully inserted external sell order to Supabase: $orderId")
         } catch (e: Exception) {
-            Log.w(TAG, "External sell order insert: ${e.message}")
+            Log.e(TAG, "External sell order insert failed: ${e.message}", e)
         }
 
         _sellOrders.value = listOf(order) + _sellOrders.value
+
+        // Also post an alert to 'support_messages' so Admin Console sees new external transfer order in support chat
+        val orderAlert = SupportMessage(
+            id = "msg-${System.currentTimeMillis()}-${(100..999).random()}",
+            userId = profile.id,
+            sender = "user",
+            senderName = profile.name ?: "User",
+            text = "External Transfer Order Placed #$orderId: $amount ${currency.uppercase()} for ₹${inrPayout.toLong()} payout to $payoutDesc. Proof: $fileName",
+            timestamp = System.currentTimeMillis(),
+            isRead = false
+        )
+        try {
+            supabase.from("support_messages").insert(orderAlert)
+        } catch (e: Exception) {
+            Log.w(TAG, "External order alert chat note: ${e.message}")
+        }
 
         // Record in transactions history
         val externalSellTx = CryptoTransaction(
@@ -886,17 +1385,86 @@ class KetuCoinRepository(
             Log.w(TAG, "KYC sync remote: ${e.message}")
         }
 
-        // Sync KYC status & name to Supabase 'users' table for Admin Console
+        val today = SimpleDateFormat("yyyy-MM-dd", Locale.US).format(Date())
+        val docNote = "Submitted $documentType for verification. Full Legal Name: $fullName"
+
+        val submission = KycSubmission(
+            id = verification.id,
+            userId = profile.id,
+            userEmail = profile.email,
+            fullName = fullName,
+            documentType = documentType,
+            idFrontUrl = idFrontUrl,
+            status = finalStatus,
+            adminNotes = docNote,
+            createdAt = getCurrentIsoTime()
+        )
+        _latestKycSubmission.value = submission
+        _kycSubmissions.value = listOf(submission) + _kycSubmissions.value.filter { it.id != submission.id }
+
         try {
-            supabase.from("users").update({
-                set("kyc_status", if (finalStatus == "approved") "APPROVED" else "PENDING")
-                set("name", fullName)
-                set("admin_notes", "Submitted $documentType for verification")
-            }) {
-                filter { eq("email", profile.email ?: "") }
-            }
+            supabase.from("kyc_submissions").insert(submission)
+            Log.d(TAG, "Successfully inserted to kyc_submissions table: ${submission.id}")
         } catch (e: Exception) {
-            Log.w(TAG, "users table KYC sync note: ${e.message}")
+            Log.w(TAG, "kyc_submissions table insert note: ${e.message}")
+        }
+
+        // Sync KYC status, name, and admin notes to Supabase 'users' table for Admin Console
+        try {
+            val existing = supabase.from("users").select {
+                filter {
+                    or {
+                        eq("id", profile.id)
+                        if (!profile.email.isNullOrBlank()) eq("email", profile.email) else eq("id", profile.id)
+                    }
+                }
+            }.decodeList<SupabaseUser>()
+
+            if (existing.isNotEmpty()) {
+                val targetId = existing.first().id
+                supabase.from("users").update({
+                    set("kyc_status", if (finalStatus == "approved") "APPROVED" else "PENDING")
+                    set("name", fullName)
+                    set("admin_notes", docNote)
+                }) {
+                    filter { eq("id", targetId) }
+                }
+            } else {
+                val sUser = SupabaseUser(
+                    id = profile.id,
+                    name = fullName,
+                    email = profile.email ?: "user@ketucoin.io",
+                    phone = profile.phone ?: "+91 98000 00000",
+                    kycStatus = if (finalStatus == "approved") "APPROVED" else "PENDING",
+                    isAccountActive = true,
+                    twoFactorEnabled = false,
+                    biometricsEnabled = false,
+                    memberSince = today,
+                    dailyLimitInr = 100000L,
+                    monthlyLimitInr = 1000000L,
+                    adminNotes = docNote
+                )
+                supabase.from("users").insert(sUser)
+            }
+            Log.d(TAG, "Successfully synced KYC status to 'users' table for user ${profile.id}")
+        } catch (e: Exception) {
+            Log.e(TAG, "users table KYC sync note: ${e.message}")
+        }
+
+        // Post an alert to 'support_messages' so Admin Console immediately sees the uploaded KYC in Support Chat
+        val kycChatMsg = SupportMessage(
+            id = "msg-${System.currentTimeMillis()}-${(100..999).random()}",
+            userId = profile.id,
+            sender = "user",
+            senderName = fullName,
+            text = "KYC Document Uploaded: $fullName submitted $documentType for identity verification. Please review and approve.",
+            timestamp = System.currentTimeMillis(),
+            isRead = false
+        )
+        try {
+            supabase.from("support_messages").insert(kycChatMsg)
+        } catch (e: Exception) {
+            Log.w(TAG, "KYC alert chat note: ${e.message}")
         }
 
         _currentProfile.value = _currentProfile.value?.copy(kycStatus = finalStatus, name = fullName)
@@ -917,9 +1485,14 @@ class KetuCoinRepository(
         try {
             supabase.from("users").update({
                 set("kyc_status", "APPROVED")
-                set("admin_notes", "KYC Approved")
+                set("admin_notes", "KYC Approved and verified")
             }) {
-                filter { eq("email", profile.email ?: "") }
+                filter {
+                    or {
+                        eq("id", profile.id)
+                        if (!profile.email.isNullOrBlank()) eq("email", profile.email) else eq("id", profile.id)
+                    }
+                }
             }
         } catch (e: Exception) {
             Log.w(TAG, "users table approve KYC note: ${e.message}")
@@ -942,9 +1515,14 @@ class KetuCoinRepository(
         try {
             supabase.from("users").update({
                 set("kyc_status", "NOT_SUBMITTED")
-                set("admin_notes", "KYC Reset")
+                set("admin_notes", "KYC Reset by user")
             }) {
-                filter { eq("email", profile.email ?: "") }
+                filter {
+                    or {
+                        eq("id", profile.id)
+                        if (!profile.email.isNullOrBlank()) eq("email", profile.email) else eq("id", profile.id)
+                    }
+                }
             }
         } catch (e: Exception) {
             Log.w(TAG, "users table reset KYC note: ${e.message}")
@@ -953,61 +1531,86 @@ class KetuCoinRepository(
         Result.success(true)
     }
 
-    // Support Chat Messaging
+    // Support Chat Messaging - Live Synchronized with Supabase 'support_messages'
+    suspend fun fetchSupportMessages(userId: String) = withContext(Dispatchers.IO) {
+        try {
+            val msgs = supabase.from("support_messages").select {
+                filter {
+                    eq("user_id", userId)
+                }
+            }.decodeList<SupportMessage>().sortedBy { it.timestamp }
+
+            if (msgs.isNotEmpty()) {
+                _supportMessages.value = msgs
+            } else {
+                val welcome = SupportMessage(
+                    id = "msg-welcome-$userId",
+                    userId = userId,
+                    sender = "admin",
+                    senderName = "KetuCoin Desk",
+                    text = "Welcome to KetuCoin Desk! We provide 24/7 crypto OTC exchange and instant INR settlements.",
+                    timestamp = System.currentTimeMillis(),
+                    isRead = true
+                )
+                _supportMessages.value = listOf(welcome)
+                try {
+                    supabase.from("support_messages").insert(welcome)
+                } catch (e: Exception) {
+                    Log.w(TAG, "Insert welcome note: ${e.message}")
+                }
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "fetchSupportMessages note: ${e.message}")
+        }
+    }
+
+    suspend fun fetchSellOrders(userId: String) = withContext(Dispatchers.IO) {
+        try {
+            val orders = supabase.from("sell_orders").select {
+                filter {
+                    eq("user_id", userId)
+                }
+            }.decodeList<SellOrder>().sortedByDescending { it.createdAt }
+
+            if (orders.isNotEmpty()) {
+                _sellOrders.value = orders
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "fetchSellOrders note: ${e.message}")
+        }
+    }
+
     suspend fun sendSupportMessage(messageText: String): Result<SupportMessage> = withContext(Dispatchers.IO) {
         val profile = _currentProfile.value ?: return@withContext Result.failure(Exception("Not logged in"))
+        val senderDisplayName = profile.name?.ifBlank { null } ?: profile.email?.substringBefore("@") ?: "User"
+        val msgId = "msg-${System.currentTimeMillis()}-${(100..999).random()}"
         val userMsg = SupportMessage(
-            id = UUID.randomUUID().toString(),
+            id = msgId,
             userId = profile.id,
-            senderRole = profile.role,
-            message = messageText,
-            createdAt = getCurrentIsoTime()
+            sender = "user",
+            senderName = senderDisplayName,
+            text = messageText.trim(),
+            timestamp = System.currentTimeMillis(),
+            isRead = false
         )
 
+        // Append locally for immediate UI feedback
         _supportMessages.value = _supportMessages.value + userMsg
 
         try {
             supabase.from("support_messages").insert(userMsg)
+            Log.d(TAG, "Successfully inserted support message to Supabase: $msgId")
         } catch (e: Exception) {
-            Log.w(TAG, "Support message insert remote: ${e.message}")
+            Log.e(TAG, "Support message insert failed: ${e.message}", e)
         }
 
-        // Automated helpful reply from Admin / KetuCoin Desk
-        scope.launch {
-            delay(1200)
-            val adminReplyText = generateAutoAdminResponse(messageText)
-            val adminMsg = SupportMessage(
-                id = UUID.randomUUID().toString(),
-                userId = profile.id,
-                senderRole = "admin",
-                message = adminReplyText,
-                createdAt = getCurrentIsoTime()
-            )
-            _supportMessages.value = _supportMessages.value + adminMsg
-            try {
-                supabase.from("support_messages").insert(adminMsg)
-            } catch (e: Exception) {
-                Log.w(TAG, "Admin message insert: ${e.message}")
-            }
+        try {
+            supabase.from("messages").insert(userMsg)
+        } catch (e: Exception) {
+            // ignore if table doesn't exist
         }
 
         Result.success(userMsg)
-    }
-
-    private fun generateAutoAdminResponse(userPrompt: String): String {
-        val lower = userPrompt.lowercase()
-        return when {
-            "payout" in lower || "inr" in lower || "withdraw" in lower ->
-                "INR settlements are executed via IMPS/NEFT to your verified bank account within 10-15 minutes after blockchain confirmation."
-            "kyc" in lower || "verify" in lower || "document" in lower ->
-                "KYC verification takes under 30 minutes. Please ensure your ID card name matches your bank account holder name."
-            "pin" in lower || "security" in lower ->
-                "You can change your 4-digit Security PIN at any time under Profile > Security PIN. Never share your PIN with anyone."
-            "usdt" in lower || "deposit" in lower || "rate" in lower ->
-                "KetuCoin provides live OTC rates with 0% extra conversion markup. Check the Home screen for real-time rates."
-            else ->
-                "Thank you for contacting KetuCoin 24/7 Desk. An executive has received your query and will update your order status promptly."
-        }
     }
 
     private fun getCurrentIsoTime(): String {

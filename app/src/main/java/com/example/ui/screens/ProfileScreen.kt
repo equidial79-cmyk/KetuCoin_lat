@@ -112,6 +112,7 @@ fun ProfileScreen(
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val context = LocalContext.current
     val latestAppUpdate by viewModel.latestAppUpdate.collectAsStateWithLifecycle()
+    val latestKycSubmission by viewModel.latestKycSubmission.collectAsStateWithLifecycle()
 
     // Notification permission launcher for Android 13+ (POST_NOTIFICATIONS)
     val notificationPermissionLauncher = rememberLauncherForActivityResult(
@@ -265,6 +266,51 @@ fun ProfileScreen(
                     )
 
                     Spacer(modifier = Modifier.height(14.dp))
+
+                    if (latestKycSubmission != null) {
+                        Surface(
+                            color = NavyDark,
+                            shape = RoundedCornerShape(8.dp),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .border(1.dp, NavyCardBorder, RoundedCornerShape(8.dp))
+                        ) {
+                            Column(modifier = Modifier.padding(10.dp)) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Text(
+                                        text = "⚡ Realtime Status",
+                                        fontSize = 10.sp,
+                                        color = AccentCyan,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                    Text(
+                                        text = "${latestKycSubmission?.status?.uppercase()}",
+                                        fontSize = 10.sp,
+                                        color = if (latestKycSubmission?.status == "approved") SuccessGreen else GoldPrimary,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                }
+                                Spacer(modifier = Modifier.height(4.dp))
+                                Text(
+                                    text = "Document: ${latestKycSubmission?.documentType}",
+                                    fontSize = 11.sp,
+                                    color = TextSecondary
+                                )
+                                if (!latestKycSubmission?.adminNotes.isNullOrBlank()) {
+                                    Text(
+                                        text = "Admin Note: ${latestKycSubmission?.adminNotes}",
+                                        fontSize = 11.sp,
+                                        color = GoldLight
+                                    )
+                                }
+                            }
+                        }
+                        Spacer(modifier = Modifier.height(10.dp))
+                    }
 
                     if (kycStatus == "approved") {
                         Row(

@@ -68,26 +68,77 @@ data class KycVerification(
 )
 
 @Serializable
-data class SellOrder(
+data class KycSubmission(
     val id: String = "",
     @SerialName("user_id") val userId: String = "",
-    val currency: String,
-    val amount: Double,
-    val method: String, // 'wallet' or 'external'
-    @SerialName("payment_proof_url") val paymentProofUrl: String? = null,
-    val status: String = "pending", // 'pending', 'completed', 'rejected'
+    @SerialName("user_email") val userEmail: String? = null,
+    @SerialName("full_name") val fullName: String = "",
+    @SerialName("document_type") val documentType: String = "Aadhaar Card",
+    @SerialName("document_number") val documentNumber: String? = null,
+    @SerialName("id_front_url") val idFrontUrl: String? = null,
+    @SerialName("id_back_url") val idBackUrl: String? = null,
+    val status: String = "pending", // 'pending', 'approved', 'rejected'
+    @SerialName("admin_notes") val adminNotes: String? = null,
     @SerialName("created_at") val createdAt: String? = null,
-    val inrPayoutEstimate: Double = 0.0
-)
+    @SerialName("submitted_at") val submittedAt: String? = null
+) {
+    val displayStatus: String get() = status.lowercase()
+}
+
+@Serializable
+data class SellOrder(
+    @SerialName("order_id") val orderId: String = "",
+    @SerialName("user_id") val userId: String = "",
+    @SerialName("user_email") val userEmail: String? = null,
+    @SerialName("crypto_symbol") val cryptoSymbol: String = "USDT",
+    @SerialName("crypto_amount") val cryptoAmount: Double = 0.0,
+    @SerialName("exchange_rate_inr") val exchangeRateInr: Double = 0.0,
+    @SerialName("inr_payout_amount") val inrPayoutAmount: Double = 0.0,
+    @SerialName("sell_type") val sellType: String = "FROM_WALLET", // 'FROM_WALLET' or 'EXTERNAL_TRANSFER'
+    @SerialName("tx_hash") val txHash: String? = null,
+    @SerialName("transfer_proof_name") val transferProofName: String? = null,
+    @SerialName("admin_receiving_address") val adminReceivingAddress: String? = null,
+    val network: String? = null,
+    @SerialName("payout_account") val payoutAccount: String? = null,
+    @SerialName("payout_type") val payoutType: String? = "IMPS",
+    val status: String = "PENDING_VERIFICATION", // 'PENDING_VERIFICATION', 'PROCESSING', 'COMPLETED', 'REJECTED'
+    @SerialName("created_at") val createdAt: Long = System.currentTimeMillis(),
+    @SerialName("updated_at") val updatedAt: Long? = null,
+    @SerialName("admin_notes") val adminNotes: String? = null,
+    @SerialName("bank_utr") val bankUtr: String? = null
+) {
+    // Backwards-compatible properties
+    val id: String get() = orderId
+    val currency: String get() = cryptoSymbol
+    val amount: Double get() = cryptoAmount
+    val method: String get() = if (sellType == "FROM_WALLET") "wallet" else "external"
+    val inrPayoutEstimate: Double get() = inrPayoutAmount
+    val paymentProofUrl: String? get() = transferProofName
+}
 
 @Serializable
 data class SupportMessage(
     val id: String = "",
     @SerialName("user_id") val userId: String = "",
-    @SerialName("sender_role") val senderRole: String, // 'user' or 'admin'
-    val message: String,
-    @SerialName("created_at") val createdAt: String? = null
-)
+    val sender: String = "user", // 'user' or 'admin'
+    @SerialName("sender_name") val senderName: String? = null,
+    val text: String = "",
+    @SerialName("message") val bodyMessage: String? = null,
+    @SerialName("content") val contentText: String? = null,
+    val timestamp: Long = System.currentTimeMillis(),
+    @SerialName("created_at") val createdAtRaw: String? = null,
+    @SerialName("is_read") val isRead: Boolean = false
+) {
+    // Backwards-compatible properties
+    val message: String get() = when {
+        text.isNotBlank() -> text
+        !bodyMessage.isNullOrBlank() -> bodyMessage
+        !contentText.isNullOrBlank() -> contentText
+        else -> ""
+    }
+    val senderRole: String get() = sender
+    val createdAt: String get() = java.text.SimpleDateFormat("hh:mm a", java.util.Locale.getDefault()).format(java.util.Date(timestamp))
+}
 
 data class CryptoMarketItem(
     val currency: String,

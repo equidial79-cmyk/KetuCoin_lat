@@ -74,6 +74,11 @@ fun SupportChatScreen(
     var inputMessage by remember { mutableStateOf("") }
     val listState = rememberLazyListState()
 
+    // Fetch latest messages from Supabase on open
+    LaunchedEffect(Unit) {
+        viewModel.refreshSupportMessages()
+    }
+
     // Scroll to bottom when new messages arrive
     LaunchedEffect(supportMessages.size) {
         if (supportMessages.isNotEmpty()) {

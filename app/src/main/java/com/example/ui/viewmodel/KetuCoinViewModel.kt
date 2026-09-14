@@ -11,6 +11,7 @@ import com.example.data.model.AppUpdateInfo
 import com.example.data.model.BankAccount
 import com.example.data.model.CryptoMarketItem
 import com.example.data.model.CryptoTransaction
+import com.example.data.model.KycSubmission
 import com.example.data.model.Profile
 import com.example.data.model.SellOrder
 import com.example.data.model.SupportMessage
@@ -36,6 +37,8 @@ class KetuCoinViewModel(
     val marketRates: StateFlow<List<CryptoMarketItem>> = repository.marketRates
     val sellOrders: StateFlow<List<SellOrder>> = repository.sellOrders
     val supportMessages: StateFlow<List<SupportMessage>> = repository.supportMessages
+    val kycSubmissions: StateFlow<List<KycSubmission>> = repository.kycSubmissions
+    val latestKycSubmission: StateFlow<KycSubmission?> = repository.latestKycSubmission
     val systemDepositAddresses: StateFlow<List<SystemDepositAddress>> = repository.systemDepositAddresses
     val transactions: StateFlow<List<CryptoTransaction>> = repository.transactions
     val latestAppUpdate: StateFlow<AppUpdateInfo?> = repository.latestAppUpdate
@@ -375,6 +378,13 @@ class KetuCoinViewModel(
     }
 
     // Support Messaging
+    fun refreshSupportMessages() {
+        val user = currentProfile.value ?: return
+        viewModelScope.launch {
+            repository.fetchSupportMessages(user.id)
+        }
+    }
+
     fun sendSupportMessage(msgText: String) {
         if (msgText.isBlank()) return
         viewModelScope.launch {
